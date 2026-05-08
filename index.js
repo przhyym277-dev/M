@@ -222,7 +222,18 @@ const client = new Client({
     puppeteer: {
         headless: true,
         executablePath: chromePath || undefined,
-        args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu']
+        args: [
+            '--no-sandbox',
+            '--disable-setuid-sandbox',
+            '--disable-dev-shm-usage',
+            '--disable-gpu',
+            '--disable-extensions',
+            '--disable-default-apps',
+            '--no-first-run',
+            '--single-process',
+            '--memory-pressure-off',
+            '--js-flags=--max-old-space-size=256'
+        ]
     }
 });
 client.on('loading_screen', (percent, message) => {
@@ -241,6 +252,11 @@ client.on('authenticated', () => {
     botStatus = 'scanned';
     currentQR = null;
     console.log('🔄 QR נסרק — מתחבר...');
+});
+
+client.on('disconnected', (reason) => {
+    console.log('⚠️ התנתק:', reason);
+    botStatus = 'waiting';
 });
 
 client.on('ready', () => {
