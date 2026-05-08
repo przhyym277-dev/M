@@ -250,6 +250,7 @@ client.on('ready', () => {
 });
 
 client.on('message', async (message) => {
+    try {
     if (message.from === 'status@broadcast') return;
     if (message.fromMe) return;
     if (message.from.includes('@g.us')) return;
@@ -326,6 +327,9 @@ client.on('message', async (message) => {
     }
 
     await message.reply(reply);
+    } catch (err) {
+        console.error('❌ שגיאה בטיפול בהודעה:', err.message);
+    }
 });
 
 client.initialize();
