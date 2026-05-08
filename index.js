@@ -274,7 +274,7 @@ async function startBot() {
         if (connection === 'connecting') { botStatus = 'scanned'; console.log('🔄 מתחבר...'); }
         if (connection === 'close') {
             const code = new Boom(lastDisconnect?.error)?.output?.statusCode;
-            const shouldReconnect = code !== DisconnectReason.loggedOut;
+            const shouldReconnect = code !== DisconnectReason.loggedOut && code !== DisconnectReason.connectionReplaced;
             console.log('⚠️ התנתק, קוד:', code, '| מתחבר שוב:', shouldReconnect);
             botStatus = 'waiting';
             if (shouldReconnect) setTimeout(startBot, 3000);
