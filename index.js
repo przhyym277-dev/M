@@ -7,23 +7,80 @@ const Groq = require('groq-sdk');
 const crm = require('./crm');
 
 let currentQR = null;
+let botStatus = 'waiting'; // waiting | scanned | connected
 
 // Health check + QR server
 const PORT = process.env.PORT || 3000;
 http.createServer(async (req, res) => {
+    if (req.url === '/status') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ status: botStatus, hasQR: !!currentQR }));
+        return;
+    }
+    if (req.url === '/qr-image') {
+        if (!currentQR) { res.writeHead(204); res.end(); return; }
+        const imgData = await QRCode.toDataURL(currentQR, { width: 260, margin: 2 });
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ img: imgData }));
+        return;
+    }
     if (req.url === '/qr') {
-        if (!currentQR) {
-            res.writeHead(200, { 'Content-Type': 'text/html' });
-            res.end('<h2>הבוט כבר מחובר, אין צורך בסריקה</h2>');
-            return;
-        }
-        const imgData = await QRCode.toDataURL(currentQR, { width: 256, margin: 2 });
-        res.writeHead(200, { 'Content-Type': 'text/html' });
-        res.end(`<!DOCTYPE html><html><head><meta http-equiv="refresh" content="20"/></head><body style="display:flex;justify-content:center;align-items:center;height:100vh;flex-direction:column;font-family:sans-serif;background:#fff;margin:0">
-            <h2 style="font-size:22px;margin-bottom:10px">סרוק עם WhatsApp של המספר הייעודי</h2>
-            <img src="${imgData}" style="width:256px;height:256px"/>
-            <p style="color:#888;margin-top:10px">מתרענן אוטומטית כל 20 שניות</p>
-        </body></html>`);
+        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+        res.end(`<!DOCTYPE html><html dir="rtl"><head>
+<meta charset="utf-8"/>
+<title>חיבור WhatsApp</title>
+<style>
+  body{margin:0;font-family:sans-serif;background:#f0f2f5;display:flex;align-items:center;justify-content:center;min-height:100vh}
+  .box{background:#fff;border-radius:16px;padding:32px;text-align:center;box-shadow:0 2px 16px #0001;width:300px}
+  h2{margin:0 0 8px;color:#111;font-size:20px}
+  .sub{color:#888;font-size:13px;margin-bottom:20px}
+  #qr-img{width:240px;height:240px;border-radius:8px;display:block;margin:0 auto}
+  .step{display:flex;align-items:center;gap:10px;padding:10px 0;border-top:1px solid #f0f0f0;font-size:14px}
+  .dot{width:12px;height:12px;border-radius:50%;background:#ddd;flex-shrink:0}
+  .dot.active{background:#25d366}
+  .dot.spin{background:#f5a623;animation:pulse 1s infinite}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+  #status-msg{margin-top:16px;font-size:13px;color:#888;min-height:20px}
+</style></head>
+<body><div class="box">
+  <h2>חיבור WhatsApp</h2>
+  <p class="sub">סרוק עם המספר הייעודי של הבוט</p>
+  <img id="qr-img" src="" alt="טוען QR..."/>
+  <div id="status-msg">ממתין לסריקה...</div>
+  <div class="step"><div class="dot active" id="d1"></div><span>ממתין לסריקה</span></div>
+  <div class="step"><div class="dot" id="d2"></div><span>QR נסרק</span></div>
+  <div class="step"><div class="dot" id="d3"></div><span>מתחבר ל-WhatsApp</span></div>
+  <div class="step"><div class="dot" id="d4"></div><span>מחובר ומוכן!</span></div>
+</div>
+<script>
+let lastStatus='waiting';
+async function refresh(){
+  try{
+    const s=await fetch('/status').then(r=>r.json());
+    if(s.status!==lastStatus){
+      lastStatus=s.status;
+      const msg=document.getElementById('status-msg');
+      const d2=document.getElementById('d2'),d3=document.getElementById('d3'),d4=document.getElementById('d4');
+      if(s.status==='scanned'){
+        d2.className='dot active';d3.className='dot spin';
+        msg.textContent='QR נסרק! מתחבר...';
+        document.getElementById('qr-img').style.opacity='0.3';
+      } else if(s.status==='connected'){
+        d2.className='dot active';d3.className='dot active';d4.className='dot active';
+        msg.textContent='✅ מחובר! הבוט פעיל.';
+        document.getElementById('qr-img').style.display='none';
+      }
+    }
+    if(s.hasQR && s.status==='waiting'){
+      const q=await fetch('/qr-image').then(r=>r.json());
+      if(q.img) document.getElementById('qr-img').src=q.img;
+    }
+  }catch(e){}
+  setTimeout(refresh, 2000);
+}
+refresh();
+</script>
+</body></html>`);
         return;
     }
     res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -153,12 +210,19 @@ process.on('unhandledRejection', (err) => console.error('שגיאה:', err.messa
 
 client.on('qr', (qr) => {
     currentQR = qr;
-    console.log('\n📱 פתח את הכתובת הזו בדפדפן כדי לסרוק QR:');
-    console.log(`   https://mastercode-whatsapp-agent.onrender.com/qr\n`);
+    botStatus = 'waiting';
+    console.log('\n📱 סרוק QR בדפדפן: https://mastercode-whatsapp-agent.onrender.com/qr\n');
     qrcode.generate(qr, { small: true });
 });
 
+client.on('authenticated', () => {
+    botStatus = 'scanned';
+    currentQR = null;
+    console.log('🔄 QR נסרק — מתחבר...');
+});
+
 client.on('ready', () => {
+    botStatus = 'connected';
     currentQR = null;
     console.log('✅ מאקס מוכן ומחובר!');
 });
