@@ -390,10 +390,14 @@ async function startBot() {
 
                 const aiMode = isOwner ? ownerMode : 'sales';
 
-                // Typing indicator
-                await sock.sendPresenceUpdate('composing', jid);
+                // Typing indicator (ignore errors — @lid JIDs may not support presence)
+                const presence = (type) => Promise.race([
+                    sock.sendPresenceUpdate(type, jid).catch(() => {}),
+                    new Promise(r => setTimeout(r, 1500))
+                ]);
+                await presence('composing');
                 const { reply, understood, status, name, email, quoteRequest } = await getAIResponse(jid, userText, aiMode);
-                await sock.sendPresenceUpdate('paused', jid);
+                await presence('paused');
 
                 if (!understood || !reply) {
                     console.log(`❌ Groq נכשל`);
