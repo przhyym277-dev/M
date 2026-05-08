@@ -169,11 +169,11 @@ function parseAIReply(raw) {
     const nameMatch   = raw.match(/NAME:\s*\[?(.+?)\]?\s*$/m);
     const emailMatch  = raw.match(/EMAIL:\s*\[?(.+?)\]?\s*$/m);
     const quoteMatch  = raw.match(/QUOTE_REQUEST:\s*\[?(.+?)\]?\s*$/m);
+    // Remove entire lines that contain any of the meta tags
     const clean = raw
-        .replace(/STATUS:\s*\[?[\w_]+\]?/g, '')
-        .replace(/NAME:\s*\[?.+?\]?\s*$/mg, '')
-        .replace(/EMAIL:\s*\[?.+?\]?\s*$/mg, '')
-        .replace(/QUOTE_REQUEST:\s*\[?.+?\]?\s*$/mg, '')
+        .split('\n')
+        .filter(line => !/STATUS:|NAME:|EMAIL:|QUOTE_REQUEST:/.test(line))
+        .join('\n')
         .trim();
     return {
         reply:        clean,
