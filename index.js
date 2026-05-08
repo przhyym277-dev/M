@@ -205,7 +205,7 @@ async function getAIResponse(jid, userMessage, mode) {
     if (history.length > 20) history.splice(0, history.length - 20);
     try {
         const model = genAI.getGenerativeModel({
-            model: 'gemini-2.0-flash',
+            model: 'gemini-2.0-flash-lite',
             systemInstruction: systemPrompt,
             generationConfig: { maxOutputTokens: 500, temperature: 0.7 }
         });
