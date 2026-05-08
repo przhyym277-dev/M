@@ -1,171 +1,317 @@
 'use strict';
 
-const PDFDocument = require('pdfkit');
-const path = require('path');
-
-const FONT_REGULAR = path.join(__dirname, 'node_modules/@fontsource/heebo/files/heebo-hebrew-400-normal.woff');
-const FONT_BOLD    = path.join(__dirname, 'node_modules/@fontsource/heebo/files/heebo-hebrew-700-normal.woff');
-
 const GREEN  = '#25d366';
 const DARK   = '#1a1a2e';
 const LIGHT  = '#f0faf4';
-const WHITE  = '#ffffff';
-const GRAY   = '#666666';
 const BORDER = '#d0ead8';
 
-function fill(doc, x, y, w, h, color) {
-    doc.save().rect(x, y, w, h).fill(color).restore();
-}
-
-// Right-aligned text helper for Hebrew RTL
-function rtlText(doc, text, x, y, width, opts = {}) {
-    doc.text(text, x, y, { width, align: 'right', features: ['rtla'], ...opts });
-}
-
 async function generateQuote({ customerName, packageName, packageDetails, price, date }) {
-    return new Promise((resolve, reject) => {
-        try {
-            const doc = new PDFDocument({
-                size: 'A4',
-                margins: { top: 0, bottom: 0, left: 0, right: 0 },
-                info: { Title: 'הצעת מחיר - מאסטר קוד', Author: 'מאסטר קוד' },
-            });
+    const quoteDate = date
+        ? new Date(date).toLocaleDateString('he-IL')
+        : new Date().toLocaleDateString('he-IL');
 
-            const chunks = [];
-            doc.on('data', c => chunks.push(c));
-            doc.on('end',  () => resolve(Buffer.concat(chunks)));
-            doc.on('error', reject);
+    const priceStr = '₪' + Number(price).toLocaleString('he-IL');
 
-            doc.registerFont('Regular', FONT_REGULAR);
-            doc.registerFont('Bold',    FONT_BOLD);
+    // Escape HTML entities to avoid injection
+    function esc(str) {
+        return String(str ?? '')
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;');
+    }
 
-            const W  = doc.page.width;
-            const H  = doc.page.height;
-            const M  = 50;
-            const CW = W - M * 2;
-            const quoteDate = date
-                ? new Date(date).toLocaleDateString('he-IL')
-                : new Date().toLocaleDateString('he-IL');
-            const priceStr = '₪' + Number(price).toLocaleString('he-IL');
+    const html = `<!DOCTYPE html>
+<html dir="rtl" lang="he">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>הצעת מחיר - מאסטר קוד</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Heebo:wght@400;700;900&display=swap" rel="stylesheet" />
+  <style>
+    /* ── Reset & base ── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
-            // ── Header ────────────────────────────────────────────────────────
-            fill(doc, 0, 0, W, 120, GREEN);
+    body {
+      font-family: 'Heebo', sans-serif;
+      background: #f4f7f5;
+      color: ${DARK};
+      min-height: 100vh;
+      display: flex;
+      justify-content: center;
+      align-items: flex-start;
+      padding: 32px 16px 48px;
+    }
 
-            doc.font('Bold').fontSize(34).fillColor(WHITE);
-            rtlText(doc, 'מאסטר קוד', M, 28, CW);
+    /* ── Card ── */
+    .card {
+      background: #ffffff;
+      border-radius: 16px;
+      box-shadow: 0 8px 40px rgba(0,0,0,0.13);
+      width: 100%;
+      max-width: 680px;
+      overflow: hidden;
+    }
 
-            doc.font('Regular').fontSize(15).fillColor(WHITE);
-            rtlText(doc, 'הצעת מחיר', M, 72, CW);
+    /* ── Header ── */
+    .header {
+      background: ${GREEN};
+      padding: 36px 36px 28px;
+      position: relative;
+    }
+    .header-brand {
+      font-size: 36px;
+      font-weight: 900;
+      color: #ffffff;
+      letter-spacing: -0.5px;
+      line-height: 1;
+    }
+    .header-sub {
+      font-size: 16px;
+      font-weight: 400;
+      color: rgba(255,255,255,0.85);
+      margin-top: 8px;
+    }
+    .header-bar {
+      height: 5px;
+      background: ${DARK};
+    }
 
-            fill(doc, 0, 120, W, 5, DARK);
+    /* ── Meta row (customer / date) ── */
+    .meta {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      background: ${LIGHT};
+      border: 1px solid ${BORDER};
+      border-radius: 10px;
+      margin: 24px 28px 0;
+      padding: 14px 20px;
+      gap: 12px;
+    }
+    .meta-label {
+      font-size: 11px;
+      font-weight: 700;
+      color: #888;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 3px;
+    }
+    .meta-value {
+      font-size: 15px;
+      font-weight: 700;
+      color: ${DARK};
+    }
+    .meta-date {
+      text-align: left;
+      flex-shrink: 0;
+    }
 
-            // ── Customer + Date ───────────────────────────────────────────────
-            let y = 145;
-            fill(doc, M, y, CW, 60, LIGHT);
-            doc.save().rect(M, y, CW, 60).lineWidth(1).strokeColor(BORDER).stroke().restore();
+    /* ── Section ── */
+    .section { margin: 24px 28px 0; }
 
-            doc.font('Bold').fontSize(11).fillColor(GRAY);
-            rtlText(doc, 'לקוח', M + 10, y + 8, CW - 20);
+    .section-title {
+      background: ${DARK};
+      color: #ffffff;
+      font-size: 13px;
+      font-weight: 700;
+      padding: 10px 16px;
+      border-radius: 8px 8px 0 0;
+      letter-spacing: 0.3px;
+    }
 
-            doc.font('Regular').fontSize(14).fillColor(DARK);
-            rtlText(doc, customerName, M + 10, y + 26, CW - 20);
+    /* ── Table ── */
+    .info-table {
+      width: 100%;
+      border-collapse: collapse;
+      border: 1px solid ${BORDER};
+      border-top: none;
+      border-radius: 0 0 8px 8px;
+      overflow: hidden;
+    }
+    .info-table tr:nth-child(odd)  td { background: #ffffff; }
+    .info-table tr:nth-child(even) td { background: ${LIGHT}; }
+    .info-table td {
+      padding: 13px 16px;
+      font-size: 13px;
+      border-bottom: 1px solid ${BORDER};
+      vertical-align: top;
+    }
+    .info-table tr:last-child td { border-bottom: none; }
+    .info-table .col-label {
+      font-weight: 700;
+      color: ${DARK};
+      width: 30%;
+      background: #e2f5ea !important;
+    }
+    .info-table tr:nth-child(even) .col-label { background: #d4efe0 !important; }
+    .info-table .col-value {
+      color: #333;
+      font-weight: 400;
+      line-height: 1.55;
+    }
 
-            // Date on left side
-            doc.font('Regular').fontSize(11).fillColor(GRAY)
-               .text(quoteDate, M + 10, y + 20, { width: 120, align: 'left' });
+    /* ── Price box ── */
+    .price-box {
+      background: ${LIGHT};
+      border: 1px solid ${BORDER};
+      border-top: none;
+      border-radius: 0 0 8px 8px;
+      padding: 18px 20px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .price-label {
+      font-size: 13px;
+      color: #888;
+      font-weight: 400;
+    }
+    .price-value {
+      font-size: 34px;
+      font-weight: 900;
+      color: ${GREEN};
+      letter-spacing: -1px;
+    }
 
-            // ── Package section ───────────────────────────────────────────────
-            y += 80;
-            fill(doc, M, y, CW, 34, DARK);
-            doc.font('Bold').fontSize(13).fillColor(WHITE);
-            rtlText(doc, 'פרטי החבילה', M + 10, y + 10, CW - 20);
+    /* ── Notice ── */
+    .notice {
+      margin: 24px 28px 0;
+      background: #fffde7;
+      border: 1px solid #ffe082;
+      border-radius: 10px;
+      padding: 14px 18px;
+      font-size: 13px;
+      font-weight: 700;
+      color: #b8860b;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .notice-icon { font-size: 18px; flex-shrink: 0; }
 
-            const packageRows = [
-                { label: 'חבילה',   value: packageName },
-                { label: 'כולל',    value: packageDetails },
-            ];
+    /* ── Footer ── */
+    .footer {
+      background: ${DARK};
+      margin-top: 32px;
+      padding: 22px 36px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .footer-brand {
+      font-size: 17px;
+      font-weight: 900;
+      color: ${GREEN};
+    }
+    .footer-contact {
+      font-size: 13px;
+      color: rgba(255,255,255,0.8);
+      font-weight: 400;
+      direction: ltr;
+    }
 
-            packageRows.forEach((row, i) => {
-                y += 34;
-                const bg = i % 2 === 0 ? WHITE : LIGHT;
-                fill(doc, M, y, CW, 40, bg);
-                doc.save().rect(M, y, CW, 40).lineWidth(0.5).strokeColor(BORDER).stroke().restore();
+    /* ── Print ── */
+    @media print {
+      body { background: none; padding: 0; }
+      .card {
+        box-shadow: none;
+        border-radius: 0;
+        max-width: none;
+        width: 100%;
+      }
+    }
 
-                const LW = Math.round(CW * 0.28);
-                fill(doc, M, y, LW, 40, i % 2 === 0 ? '#e2f5ea' : '#d4efe0');
+    /* ── Mobile ── */
+    @media (max-width: 520px) {
+      .header { padding: 24px 20px 20px; }
+      .header-brand { font-size: 28px; }
+      .meta, .section, .notice { margin-left: 16px; margin-right: 16px; }
+      .price-value { font-size: 26px; }
+      .footer { padding: 18px 20px; flex-direction: column; gap: 6px; text-align: center; }
+    }
+  </style>
+</head>
+<body>
+<div class="card">
 
-                doc.font('Bold').fontSize(11).fillColor(DARK);
-                rtlText(doc, row.label, M + 6, y + 13, LW - 12);
+  <!-- Header -->
+  <div class="header">
+    <div class="header-brand">מאסטר קוד</div>
+    <div class="header-sub">הצעת מחיר</div>
+  </div>
+  <div class="header-bar"></div>
 
-                doc.font('Regular').fontSize(11).fillColor(DARK);
-                rtlText(doc, row.value, M + LW + 6, y + 13, CW - LW - 12);
-            });
+  <!-- Customer / Date -->
+  <div class="meta">
+    <div>
+      <div class="meta-label">לקוח</div>
+      <div class="meta-value">${esc(customerName)}</div>
+    </div>
+    <div class="meta-date">
+      <div class="meta-label">תאריך</div>
+      <div class="meta-value">${esc(quoteDate)}</div>
+    </div>
+  </div>
 
-            // ── Price section ─────────────────────────────────────────────────
-            y += 74;
-            fill(doc, M, y, CW, 34, DARK);
-            doc.font('Bold').fontSize(13).fillColor(WHITE);
-            rtlText(doc, 'מחיר', M + 10, y + 10, CW - 20);
+  <!-- Package details -->
+  <div class="section">
+    <div class="section-title">פרטי החבילה</div>
+    <table class="info-table">
+      <tr>
+        <td class="col-label">חבילה</td>
+        <td class="col-value">${esc(packageName)}</td>
+      </tr>
+      <tr>
+        <td class="col-label">כולל</td>
+        <td class="col-value">${esc(packageDetails)}</td>
+      </tr>
+    </table>
+  </div>
 
-            y += 34;
-            fill(doc, M, y, CW, 60, LIGHT);
-            doc.save().rect(M, y, CW, 60).lineWidth(1).strokeColor(BORDER).stroke().restore();
+  <!-- Price -->
+  <div class="section">
+    <div class="section-title">מחיר</div>
+    <div class="price-box">
+      <div class="price-label">סה"כ לתשלום</div>
+      <div class="price-value">${esc(priceStr)}</div>
+    </div>
+  </div>
 
-            doc.font('Regular').fontSize(12).fillColor(GRAY);
-            rtlText(doc, 'סה"כ לתשלום', M + 10, y + 8, CW - 20);
+  <!-- Payment terms -->
+  <div class="section">
+    <div class="section-title">תנאי תשלום</div>
+    <table class="info-table">
+      <tr>
+        <td class="col-label">מקדמה</td>
+        <td class="col-value">שליש מראש בהזמנת העבודה</td>
+      </tr>
+      <tr>
+        <td class="col-label">יתרה</td>
+        <td class="col-value">שני שליש במסירת האתר</td>
+      </tr>
+    </table>
+  </div>
 
-            doc.font('Bold').fontSize(26).fillColor(GREEN);
-            rtlText(doc, priceStr, M + 10, y + 24, CW - 20);
+  <!-- Validity notice -->
+  <div class="notice">
+    <span class="notice-icon">⚠️</span>
+    <span>הצעה תקפה ל-7 ימים מתאריך הנפקת המסמך</span>
+  </div>
 
-            // ── Payment Terms ─────────────────────────────────────────────────
-            y += 80;
-            fill(doc, M, y, CW, 34, DARK);
-            doc.font('Bold').fontSize(13).fillColor(WHITE);
-            rtlText(doc, 'תנאי תשלום', M + 10, y + 10, CW - 20);
+  <!-- Footer -->
+  <div class="footer">
+    <div class="footer-brand">מאסטר קוד</div>
+    <div class="footer-contact">יאיר | 0522091733</div>
+  </div>
 
-            const payRows = [
-                { label: 'מקדמה',   value: 'שליש מראש בהזמנת העבודה' },
-                { label: 'יתרה',    value: 'שני שליש במסירת האתר' },
-            ];
+</div>
+</body>
+</html>`;
 
-            payRows.forEach((row, i) => {
-                y += 34;
-                const bg = i % 2 === 0 ? WHITE : LIGHT;
-                fill(doc, M, y, CW, 40, bg);
-                doc.save().rect(M, y, CW, 40).lineWidth(0.5).strokeColor(BORDER).stroke().restore();
-
-                const LW = Math.round(CW * 0.28);
-                fill(doc, M, y, LW, 40, i % 2 === 0 ? '#e2f5ea' : '#d4efe0');
-
-                doc.font('Bold').fontSize(11).fillColor(DARK);
-                rtlText(doc, row.label, M + 6, y + 13, LW - 12);
-
-                doc.font('Regular').fontSize(11).fillColor(DARK);
-                rtlText(doc, row.value, M + LW + 6, y + 13, CW - LW - 12);
-            });
-
-            // ── Validity notice ───────────────────────────────────────────────
-            y += 54;
-            fill(doc, M, y, CW, 44, '#fff8e1');
-            doc.save().rect(M, y, CW, 44).lineWidth(1).strokeColor('#ffe082').stroke().restore();
-
-            doc.font('Bold').fontSize(12).fillColor('#b8860b');
-            rtlText(doc, '⚠ הצעה תקפה ל-7 ימים מתאריך הנפקת המסמך', M + 10, y + 14, CW - 20);
-
-            // ── Footer ────────────────────────────────────────────────────────
-            fill(doc, 0, H - 65, W, 65, DARK);
-
-            doc.font('Bold').fontSize(14).fillColor(GREEN);
-            rtlText(doc, 'מאסטר קוד', M, H - 50, CW);
-
-            doc.font('Regular').fontSize(11).fillColor(WHITE);
-            rtlText(doc, 'יאיר | 0522091733', M, H - 30, CW);
-
-            doc.end();
-        } catch (err) {
-            reject(err);
-        }
-    });
+    return Buffer.from(html, 'utf8');
 }
 
 module.exports = { generateQuote };

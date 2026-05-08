@@ -89,6 +89,12 @@ const STATUS_EMOJI = {
     cold: '❄️'
 };
 
+function jidToPhone(jid) {
+    const num = jid.split('@')[0];
+    if (num.startsWith('972')) return '0' + num.slice(3);
+    return num;
+}
+
 function formatList() {
     const db = load();
     const customers = Object.values(db);
@@ -96,11 +102,25 @@ function formatList() {
 
     return customers.map(c => {
         const emoji = STATUS_EMOJI[c.status] || '•';
-        const name = c.name || c.phone;
-        const last = c.log.length ? c.log[c.log.length - 1].text.substring(0, 40) : '—';
+        const name = c.name || jidToPhone(c.phone);
+        const phone = jidToPhone(c.phone);
         const emailLine = c.email ? `\n📧 ${c.email}` : '';
-        return `${emoji} *${name}*\nסטטוס: ${c.status} | ${c.phone}${emailLine}\nאחרון: ${last}`;
+        const lastMsg = c.log.length ? c.log[c.log.length - 1].text.substring(0, 60) : '—';
+        const lastDate = c.lastSeen
+            ? (() => { const d = new Date(c.lastSeen); return `${d.getDate()}/${d.getMonth() + 1}/${d.getFullYear()}`; })()
+            : '—';
+        return `${emoji} *${name}*\n📞 ${phone}${emailLine}\nסטטוס: ${c.status}\nשיחה: "${lastMsg}"\nנראה לאחרונה: ${lastDate}`;
     }).join('\n\n');
+}
+
+function formatCustomerShort(phone) {
+    const db = load();
+    const c = db[phone] || null;
+    if (!c) return `לא נמצא לקוח: ${phone}`;
+    const emoji = STATUS_EMOJI[c.status] || '•';
+    const name = c.name || jidToPhone(c.phone);
+    const readablePhone = jidToPhone(c.phone);
+    return `${emoji} ${name} | ${readablePhone} | ${c.status}`;
 }
 
 function formatHistory(phone) {
@@ -114,4 +134,4 @@ function formatHistory(phone) {
     return `📋 *היסטוריה — ${name}*\nסטטוס: ${c.status}${emailHeader}\n\n${lines.join('\n') || 'אין הודעות'}`;
 }
 
-module.exports = { getOrCreate, addLog, setStatus, setName, setEmail, getAll, getCustomer, formatList, formatHistory };
+module.exports = { getOrCreate, addLog, setStatus, setName, setEmail, getAll, getCustomer, formatList, formatCustomerShort, formatHistory };

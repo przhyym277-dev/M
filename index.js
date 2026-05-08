@@ -112,59 +112,68 @@ const PACKAGES = {
     'full-stack':        { details: '+ Backend, DB, Dashboard, API | תמיכה 3 חודשים' },
 };
 
-const SALES_PROMPT = `אתה "מאקס" — נציג מכירות של מאסטר קוד, חברה לבניית דפי נחיתה ופתרונות דיגיטליים.
+const SALES_PROMPT = `אתה "מאקס" — נציג מכירות של מאסטר קוד.
 
-כללי שפה:
-- עברית תקינה, חמה ומשכנעת — לא רשמי, לא סלנג
-- משפטים קצרים וחדים
-- תמיד תסיים עם שאלה שמקדמת את הסגירה
-- אמוג'י במידה
-
-טכניקת מכירה:
-- שאל שאלות כדי להבין את הצורך לפני שאתה מציג מחיר
-- הדגש תוצאות ולא פיצ'רים ("לקוחות ימצאו אותך בגוגל" לא "SEO בסיסי")
-- כשהלקוח מתעניין — צור דחיפות: "יש לנו חלון פנוי השבוע"
-- התנגדות מחיר? חלק לתשלומים, הצג את הערך: "זה פחות מ-₪50 ליום"
-- מטרה: לקבוע שיחה עם יאיר. כשמוכן — "מתי נוח לך לשיחה קצרה של 15 דקות?"
+על החברה:
+מאסטר קוד בונה דפי נחיתה ואתרים לעסקים קטנים ובינוניים בישראל.
+הבעלים: יאיר | טלפון: 0522091733
+התמחות: דפי נחיתה שממירים, SEO, חנויות אונליין, מערכות ניהול, בוטים לוואטסאפ.
+לקוחות טיפוסיים: בעלי עסקים, קוזמטיקאיות, מאמנים, עורכי דין, רופאים, יזמים.
+יתרון תחרותי: מהירות (48 שעות לדף בסיסי), תמיכה אישית, מחירים הוגנים.
 
 החבילות:
-1. 🚀 כניסה — ₪1,200 | דף נחיתה, טופס לידים, SEO | 48 שעות
-2. 📈 צמיחה דיגיטלית — ₪1,650 | + אנימציות, Analytics, WhatsApp | תמיכה 2 חודשים
-3. 💎 Full-Stack — ₪2,400 | + Backend, DB, Dashboard, API | תמיכה 3 חודשים
-
+1. 🚀 כניסה — ₪1,200 | דף נחיתה מעוצב, טופס לידים, SEO בסיסי | 48 שעות
+2. 📈 צמיחה דיגיטלית — ₪1,650 | + אנימציות, Google Analytics, חיבור WhatsApp | תמיכה 2 חודשים
+3. 💎 Full-Stack — ₪2,400 | + Backend, בסיס נתונים, Dashboard ניהול, API | תמיכה 3 חודשים
 תנאי תשלום: שליש מראש, יתרה במסירה. תוקף הצעה: 7 ימים.
 
-איסוף מידע — שאל בטבעיות תוך כדי שיחה:
+כללי שפה:
+- עברית תקינה, חמה ומשכנעת
+- משפטים קצרים וחדים, אמוג'י במידה
+- תמיד תסיים עם שאלה שמקדמת סגירה
+
+טכניקת מכירה:
+- שאל שאלות להבנת הצורך לפני מחיר
+- הדגש תוצאות: "לקוחות ימצאו אותך בגוגל" לא "SEO"
+- דחיפות: "יש לנו חלון פנוי השבוע"
+- התנגדות מחיר: "זה פחות מ-₪50 ליום, ואתר עובד בשבילך 24/7"
+- כשמוכן לפגישה: "מתי נוח לך לשיחה קצרה של 15 דקות עם יאיר?"
+
+איסוף מידע — בטבעיות תוך כדי שיחה:
 - שם הלקוח
-- מייל (לשליחת הצעת מחיר)
+- מייל (לשליחת הצעה)
 
-כשלקוח מוכן לקבל הצעת מחיר — תגיד לו "מצוין, אכין לך הצעת מחיר ואשלח אליך תוך דקות ספורות" ו-**חובה** להוסיף:
-QUOTE_REQUEST:[שם החבילה המתאימה ביותר]
+כשלקוח מוכן להצעת מחיר — אמור: "מצוין! אכין לך הצעה מפורטת ואשלח תוך דקות" והוסף חובה:
+QUOTE_REQUEST:[שם החבילה המתאימה]
 
-אין לומר "יאיר יחזור אליך" — תמיד תמשיך לנהל את השיחה עצמאית.
-אם שאלה מחוץ לתחום — אמור שזה מחוץ לתחום שלך ותמשיך למכירה.
+אל תאמר "יאיר יחזור אליך" — נהל את השיחה עצמאית עד לסגירה.
 
 בסוף כל תשובה הוסף:
 STATUS:[new|interested|meeting_scheduled|cold]
 NAME:[שם הלקוח או UNKNOWN]
 EMAIL:[מייל הלקוח או UNKNOWN]`;
 
-const ASSISTANT_PROMPT = `אתה עוזר אישי חכם של יאיר — בעל מאסטר קוד, חברה לבניית דפי נחיתה ופתרונות דיגיטליים.
+const ASSISTANT_PROMPT = `אתה עוזר אישי חכם של יאיר.
+
+על יאיר:
+- בעל מאסטר קוד — חברה לבניית דפי נחיתה ופתרונות דיגיטליים בישראל
+- מתמחה: אתרים, SEO, בוטים לוואטסאפ, חנויות אונליין
+- טלפון: 0522091733
 
 האופי שלך:
-- ישיר, ידידותי, מעשי
-- עונה בעברית תקינה וקצרה — אל תפרגן יותר מדי מילים
-- כשנשאל לדעה — תן דעה אמיתית, לא "זה תלוי..."
+- ישיר, ידידותי, מעשי — לא פורמלי
+- עונה בעברית קצרה וחדה
+- נותן דעה אמיתית כשנשאל, לא "זה תלוי..."
+- כשמבקשים רעיונות — לפחות 3-5 קונקרטיים, לא כלליים
 
-מה אתה יודע לעשות:
-- לנסח: הצעות מחיר, מיילים, פוסטים לסושיאל, תיאורי שירות
-- להציע רעיונות: שמות לעסקים, רעיונות שיווקיים, קמפיינים, כותרות לדפי נחיתה
-- לתכנן: לוחות זמנים, רשימות משימות, אסטרטגיה
-- לענות על שאלות כלליות: טכנולוגיה, עסקים, שיווק דיגיטלי
-- לעזור עם קוד, לוגיקה, בעיות טכניות
+תחומי עזרה — הכל:
+- עסקי: הצעות מחיר, ניסוח חוזים, מיילים ללקוחות, אסטרטגיה עסקית
+- שיווק: פוסטים לסושיאל, קמפיינים, כותרות, תיאורי מוצר
+- טכנולוגיה: קוד, בעיות טכניות, בחירת כלים
+- כללי: תכנון, החלטות, שאלות כלשהן — ספורט, בישול, חדשות, כל נושא
+- אישי: לוחות זמנים, רשימות משימות, כל מה שיאיר צריך
 
-כשיאיר אומר "תציע לי רעיונות" — תן לפחות 3-5 רעיונות קונקרטיים.
-כשיאיר שואל "מה אתה חושב על X" — תן חוות דעת ברורה עם נימוק קצר.`;
+אין נושא מחוץ לתחום — ענה על הכל.`;
 
 const conversations = new Map();
 
@@ -224,6 +233,8 @@ function parseOwnerCommand(text) {
         return { cmd: 'approve_quote', phone: null, amount: Number(priceMatch[1]) };
     }
 
+    const closedMatch = t.match(/^סגר עסקה\s+([0-9]+)$/);
+    if (closedMatch) return { cmd: 'close_deal', phone: closedMatch[1] };
     const sendMatch = t.match(/^שלח(?:\s+\S+)?\s+ל([0-9]+)\s+(.+)$/s);
     if (sendMatch) return { cmd: 'send', phone: sendMatch[1], msg: sendMatch[2].trim() };
     const historyMatch = t.match(/^היסטוריה\s+([0-9]+)$/);
@@ -236,6 +247,12 @@ function parseOwnerCommand(text) {
 function normalizePhone(phone) {
     if (phone.startsWith('0')) return '972' + phone.slice(1);
     return phone;
+}
+
+function jidToPhone(jid) {
+    const num = jid.split('@')[0];
+    if (num.startsWith('972')) return '0' + num.slice(3);
+    return num;
 }
 
 function formatNamesList() {
@@ -346,21 +363,23 @@ async function startBot() {
                         pendingQuotes.delete(targetJid);
 
                         try {
-                            const pdfBuf = await generateQuote({
+                            const htmlBuf = await generateQuote({
                                 customerName:   quoteData.name || 'לקוח',
                                 packageName:    quoteData.packageName,
                                 packageDetails: quoteData.packageDetails,
                                 price:          cmd.amount,
                             });
-                            const fileName = `הצעת מחיר - ${quoteData.name || 'לקוח'}.pdf`;
+                            const displayName = quoteData.name || 'לקוח';
+                            const fileName = `הצעת מחיר - ${displayName}.html`;
                             await sock.sendMessage(targetJid, {
-                                document: pdfBuf,
-                                mimetype: 'application/pdf',
+                                document: htmlBuf,
+                                mimetype: 'text/html',
                                 fileName,
-                                caption: `📄 הצעת המחיר שלך מוכנה! לשאלות — אני כאן 😊`
+                                caption: `📄 הצעת המחיר שלך מוכנה! פתח את הקובץ לצפייה 😊`
                             });
                             crm.addLog(targetJid, 'out', `[הצעת מחיר נשלחה: ${quoteData.packageName} ₪${cmd.amount}]`);
-                            await sock.sendMessage(jid, { text: `✅ הצעת מחיר נשלחה ל-${quoteData.name || targetJid} — ${quoteData.packageName} ₪${cmd.amount}` });
+                            crm.setStatus(targetJid, 'meeting_scheduled');
+                            await sock.sendMessage(jid, { text: `✅ הצעת מחיר נשלחה ל-${quoteData.name || jidToPhone(targetJid)} — ${quoteData.packageName} ₪${cmd.amount}` });
                         } catch (err) {
                             console.error('שגיאה ביצירת PDF:', err.message);
                             await sock.sendMessage(jid, { text: `❌ שגיאה ביצירת PDF: ${err.message}` });
@@ -390,6 +409,14 @@ async function startBot() {
                         await sock.sendMessage(jid, { text: `✅ סטטוס עודכן ל-${cmd.status}` });
                         continue;
                     }
+                    if (cmd?.cmd === 'close_deal') {
+                        const ph = normalizePhone(cmd.phone) + '@s.whatsapp.net';
+                        crm.setStatus(ph, 'closed');
+                        crm.addLog(ph, 'out', '[עסקה נסגרה]');
+                        const c = crm.getCustomer(ph);
+                        await sock.sendMessage(jid, { text: `✅ עסקה נסגרה! ${c?.name || jidToPhone(ph)} 🎉` });
+                        continue;
+                    }
                 }
 
                 const aiMode = isOwner ? ownerMode : 'sales';
@@ -406,8 +433,8 @@ async function startBot() {
                 if (!understood || !reply) {
                     console.log(`❌ Groq נכשל`);
                     if (!isOwner) {
-                        await sock.sendMessage(jid, { text: 'תודה על פנייתך. אני מעביר ליאיר והוא יחזור אליך בהקדם.' });
-                        await notifyOwner(`🔔 לקוח ממתין\nמספר: ${jid}\nהודעה: "${userText}"`);
+                        await sock.sendMessage(jid, { text: 'רגע אחד, בודק עבורך... 🔄' });
+                        await notifyOwner(`🔔 לקוח ממתין לתשובה\nשם: ${crm.getCustomer(jid)?.name || 'לא ידוע'}\nמספר: ${jidToPhone(jid)}\nהודעה: "${userText}"`);
                     } else {
                         await sock.sendMessage(jid, { text: '❌ שגיאה בחיבור ל-AI.' });
                     }
@@ -424,12 +451,18 @@ async function startBot() {
                     if (name)   crm.setName(jid, name);
                     if (email)  crm.setEmail(jid, email);
 
+                    // Notify owner on first message from new customer
+                    const customer = crm.getCustomer(jid);
+                    if (customer && customer.log.length === 1) {
+                        await notifyOwner(`👋 *לקוח חדש פנה!*\nמספר: ${jidToPhone(jid)}\nהודעה: "${userText}"`);
+                    }
+
                     // Hot lead notifications
                     if (status && status !== prevStatus) {
                         if (status === 'meeting_scheduled') {
-                            await notifyOwner(`🔥 *ליד חם!* ${name || jid} רוצה לקבוע פגישה!\nמספר: ${jid}\nהודעה: "${userText}"`);
+                            await notifyOwner(`🔥 *ליד חם!* ${name || jidToPhone(jid)} רוצה לקבוע פגישה!\nמספר: ${jidToPhone(jid)}\nהודעה: "${userText}"`);
                         } else if (status === 'interested') {
-                            await notifyOwner(`⚡ *${name || jid} מתעניין!*\nמספר: ${jid}`);
+                            await notifyOwner(`⚡ *${name || jidToPhone(jid)} מתעניין!*\nמספר: ${jidToPhone(jid)}`);
                         }
                     }
 
@@ -439,11 +472,11 @@ async function startBot() {
                         const pkgDetails = PACKAGES[pkgKey]?.details || quoteRequest;
                         pendingQuotes.set(jid, { name: name || null, packageName: pkgKey, packageDetails: pkgDetails });
                         await notifyOwner(
-                            `💼 *${name || jid} מבקש הצעת מחיר*\n` +
-                            `מספר: ${jid}\n` +
+                            `💼 *${name || jidToPhone(jid)} מבקש הצעת מחיר*\n` +
+                            `מספר: ${jidToPhone(jid)}\n` +
                             `חבילה: ${pkgKey}\n` +
                             (email ? `מייל: ${email}\n` : '') +
-                            `\nשלח: *מחיר [סכום]* כדי לשלוח PDF ללקוח`
+                            `\nשלח: *מחיר [סכום]* לשלוח הצעה`
                         );
                     }
                 }
