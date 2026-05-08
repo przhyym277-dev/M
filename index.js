@@ -216,15 +216,19 @@ client.on('message', async (message) => {
     const { reply, understood, status, name } = await getAIResponse(userPhone, userText, isOwner);
 
     if (!understood || !reply) {
+        console.log(`❌ Groq לא הצליח לענות ל-${isOwner ? 'יאיר' : userPhone}`);
         if (!isOwner) {
             await message.reply('תודה על פנייתך. אני מעביר את הבקשה ליאיר והוא יחזור אליך בהקדם.');
             await client.sendMessage(
                 OWNER_NUMBER + '@c.us',
                 `🔔 לקוח ממתין לתשובה\nמספר: ${userPhone}\nהודעה: "${userText}"`
             );
+        } else {
+            await message.reply('❌ שגיאה בחיבור ל-AI. בדוק את ה-GROQ_API_KEY.');
         }
         return;
     }
+    console.log(`💬 שולח תשובה ל-${isOwner ? 'יאיר' : userPhone}`);
 
     // עדכון CRM ללקוחות (לא לבעל העסק)
     if (!isOwner) {
