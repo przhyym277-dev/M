@@ -2,15 +2,33 @@ require('dotenv').config();
 const http = require('http');
 const { Client, LocalAuth } = require('whatsapp-web.js');
 const qrcode = require('qrcode-terminal');
+const QRCode = require('qrcode');
 const Groq = require('groq-sdk');
 const crm = require('./crm');
 
-// Health check server for Render
+let currentQR = null;
+
+// Health check + QR server
 const PORT = process.env.PORT || 3000;
-http.createServer((req, res) => {
+http.createServer(async (req, res) => {
+    if (req.url === '/qr') {
+        if (!currentQR) {
+            res.writeHead(200, { 'Content-Type': 'text/html' });
+            res.end('<h2>הבוט כבר מחובר, אין צורך בסריקה</h2>');
+            return;
+        }
+        const imgData = await QRCode.toDataURL(currentQR);
+        res.writeHead(200, { 'Content-Type': 'text/html' });
+        res.end(`<!DOCTYPE html><html><body style="display:flex;justify-content:center;align-items:center;height:100vh;flex-direction:column;font-family:sans-serif;background:#fff">
+            <h2>סרוק עם WhatsApp של המספר הייעודי</h2>
+            <img src="${imgData}" style="width:300px;height:300px"/>
+            <p>רענן את הדף אם הקוד פג תוקף</p>
+        </body></html>`);
+        return;
+    }
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ status: 'ok' }));
-}).listen(PORT, () => console.log(`Health check on port ${PORT}`));
+}).listen(PORT, () => console.log(`Server on port ${PORT} | QR: /qr`));
 
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 const OWNER_NUMBER = process.env.OWNER_PHONE;
@@ -126,11 +144,16 @@ const client = new Client({
 });
 
 client.on('qr', (qr) => {
-    console.log('\n📱 סרוק את הקוד עם הוואטסאפ של המספר הייעודי:\n');
+    currentQR = qr;
+    console.log('\n📱 פתח את הכתובת הזו בדפדפן כדי לסרוק QR:');
+    console.log(`   https://mastercode-whatsapp-agent.onrender.com/qr\n`);
     qrcode.generate(qr, { small: true });
 });
 
-client.on('ready', () => console.log('✅ מאקס מוכן ומחובר!'));
+client.on('ready', () => {
+    currentQR = null;
+    console.log('✅ מאקס מוכן ומחובר!');
+});
 
 client.on('message', async (message) => {
     if (message.from === 'status@broadcast') return;
