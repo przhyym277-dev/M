@@ -165,15 +165,15 @@ const ASSISTANT_PROMPT = `אתה עוזר אישי חכם של יאיר — בע
 const conversations = new Map();
 
 function parseAIReply(raw) {
-    const statusMatch = raw.match(/STATUS:\s*([\w_]+)/);
-    const nameMatch   = raw.match(/NAME:\s*(.+)/);
-    const emailMatch  = raw.match(/EMAIL:\s*(.+)/);
-    const quoteMatch  = raw.match(/QUOTE_REQUEST:\s*(.+)/);
+    const statusMatch = raw.match(/STATUS:\s*\[?([\w_]+)\]?/);
+    const nameMatch   = raw.match(/NAME:\s*\[?(.+?)\]?\s*$/m);
+    const emailMatch  = raw.match(/EMAIL:\s*\[?(.+?)\]?\s*$/m);
+    const quoteMatch  = raw.match(/QUOTE_REQUEST:\s*\[?(.+?)\]?\s*$/m);
     const clean = raw
-        .replace(/STATUS:\s*[\w_]+/g, '')
-        .replace(/NAME:\s*.+/g, '')
-        .replace(/EMAIL:\s*.+/g, '')
-        .replace(/QUOTE_REQUEST:\s*.+/g, '')
+        .replace(/STATUS:\s*\[?[\w_]+\]?/g, '')
+        .replace(/NAME:\s*\[?.+?\]?\s*$/mg, '')
+        .replace(/EMAIL:\s*\[?.+?\]?\s*$/mg, '')
+        .replace(/QUOTE_REQUEST:\s*\[?.+?\]?\s*$/mg, '')
         .trim();
     return {
         reply:        clean,
