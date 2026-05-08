@@ -155,7 +155,7 @@ client.on('qr', (qr) => {
     currentQR = qr;
     console.log('\n📱 פתח את הכתובת הזו בדפדפן כדי לסרוק QR:');
     console.log(`   https://mastercode-whatsapp-agent.onrender.com/qr\n`);
-    qrcode.generate(qr, { small: true });
+    qrcode.generate(qr, { small: false });
 });
 
 client.on('ready', () => {
