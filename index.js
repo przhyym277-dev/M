@@ -19,10 +19,10 @@ http.createServer(async (req, res) => {
         }
         const imgData = await QRCode.toDataURL(currentQR);
         res.writeHead(200, { 'Content-Type': 'text/html' });
-        res.end(`<!DOCTYPE html><html><head><meta http-equiv="refresh" content="30"/></head><body style="display:flex;justify-content:center;align-items:center;height:100vh;flex-direction:column;font-family:sans-serif;background:#fff">
-            <h2>סרוק עם WhatsApp של המספר הייעודי</h2>
-            <img src="${imgData}" style="width:320px;height:320px"/>
-            <p>הדף מתרענן אוטומטית כל 30 שניות</p>
+        res.end(`<!DOCTYPE html><html><head><meta http-equiv="refresh" content="20"/></head><body style="display:flex;justify-content:center;align-items:center;height:100vh;flex-direction:column;font-family:sans-serif;background:#fff;margin:0">
+            <h2 style="font-size:22px;margin-bottom:10px">סרוק עם WhatsApp של המספר הייעודי</h2>
+            <img src="${imgData}" style="width:400px;height:400px"/>
+            <p style="color:#888;margin-top:10px">מתרענן אוטומטית כל 20 שניות</p>
         </body></html>`);
         return;
     }
