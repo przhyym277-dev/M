@@ -230,9 +230,10 @@ const client = new Client({
             '--disable-extensions',
             '--disable-default-apps',
             '--no-first-run',
-            '--single-process',
             '--memory-pressure-off',
-            '--js-flags=--max-old-space-size=256'
+            '--disable-background-timer-throttling',
+            '--disable-backgrounding-occluded-windows',
+            '--disable-renderer-backgrounding'
         ]
     }
 });
