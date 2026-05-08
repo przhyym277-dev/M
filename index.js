@@ -121,7 +121,7 @@ function parseOwnerCommand(text) {
 }
 
 const client = new Client({
-    authStrategy: new LocalAuth(),
+    authStrategy: new LocalAuth({ dataPath: process.env.DATA_PATH || './' }),
     puppeteer: { headless: true, args: ['--no-sandbox', '--disable-setuid-sandbox'] }
 });
 
