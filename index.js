@@ -19,10 +19,10 @@ http.createServer(async (req, res) => {
         }
         const imgData = await QRCode.toDataURL(currentQR);
         res.writeHead(200, { 'Content-Type': 'text/html' });
-        res.end(`<!DOCTYPE html><html><body style="display:flex;justify-content:center;align-items:center;height:100vh;flex-direction:column;font-family:sans-serif;background:#fff">
+        res.end(`<!DOCTYPE html><html><head><meta http-equiv="refresh" content="30"/></head><body style="display:flex;justify-content:center;align-items:center;height:100vh;flex-direction:column;font-family:sans-serif;background:#fff">
             <h2>סרוק עם WhatsApp של המספר הייעודי</h2>
-            <img src="${imgData}" style="width:300px;height:300px"/>
-            <p>רענן את הדף אם הקוד פג תוקף</p>
+            <img src="${imgData}" style="width:320px;height:320px"/>
+            <p>הדף מתרענן אוטומטית כל 30 שניות</p>
         </body></html>`);
         return;
     }
@@ -138,10 +138,18 @@ function parseOwnerCommand(text) {
     return null;
 }
 
+console.log('מאתחל Puppeteer...');
 const client = new Client({
     authStrategy: new LocalAuth({ dataPath: process.env.DATA_PATH || './' }),
-    puppeteer: { headless: true, args: ['--no-sandbox', '--disable-setuid-sandbox'] }
+    puppeteer: {
+        headless: true,
+        args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu']
+    }
 });
+client.on('loading_screen', (percent, message) => {
+    console.log(`טוען: ${percent}% - ${message}`);
+});
+process.on('unhandledRejection', (err) => console.error('שגיאה:', err.message));
 
 client.on('qr', (qr) => {
     currentQR = qr;
