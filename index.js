@@ -8,7 +8,9 @@ const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLat
 const { Boom } = require('@hapi/boom');
 const pino = require('pino');
 
-const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
+const GROQ_KEYS = [process.env.GROQ_API_KEY, process.env.GROQ_API_KEY_2].filter(Boolean);
+let groqKeyIndex = 0;
+function getGroqClient() { return new Groq({ apiKey: GROQ_KEYS[groqKeyIndex] }); }
 const OWNER_NUMBER = process.env.OWNER_PHONE;
 const OWNER_LID = process.env.OWNER_LID;
 const OWNER_JID = OWNER_NUMBER + '@s.whatsapp.net';
@@ -203,20 +205,31 @@ async function getAIResponse(jid, userMessage, mode) {
     const history = conversations.get(jid);
     history.push({ role: 'user', content: userMessage });
     if (history.length > 16) history.splice(0, history.length - 16);
-    try {
-        const completion = await groq.chat.completions.create({
-            model: 'llama-3.3-70b-versatile',
-            messages: [{ role: 'system', content: systemPrompt }, ...history],
-            max_tokens: 500,
-            temperature: 0.7,
-        });
-        const raw = completion.choices[0]?.message?.content || '';
-        history.push({ role: 'assistant', content: raw });
-        return { ...parseAIReply(raw), understood: true };
-    } catch (err) {
-        console.error('Groq error:', err.message);
-        return { reply: null, understood: false };
+
+    for (let attempt = 0; attempt < GROQ_KEYS.length; attempt++) {
+        try {
+            const client = getGroqClient();
+            const completion = await client.chat.completions.create({
+                model: 'llama-3.3-70b-versatile',
+                messages: [{ role: 'system', content: systemPrompt }, ...history],
+                max_tokens: 500,
+                temperature: 0.7,
+            });
+            const raw = completion.choices[0]?.message?.content || '';
+            history.push({ role: 'assistant', content: raw });
+            return { ...parseAIReply(raw), understood: true };
+        } catch (err) {
+            const is429 = err.message?.includes('429') || err.status === 429;
+            if (is429 && attempt < GROQ_KEYS.length - 1) {
+                groqKeyIndex = (groqKeyIndex + 1) % GROQ_KEYS.length;
+                console.log(`⚠️ Groq key ${attempt + 1} הגיע ללימיט, עובר למפתח ${groqKeyIndex + 1}`);
+                continue;
+            }
+            console.error('Groq error:', err.message);
+            return { reply: null, understood: false };
+        }
     }
+    return { reply: null, understood: false };
 }
 
 function parseOwnerCommand(text) {
