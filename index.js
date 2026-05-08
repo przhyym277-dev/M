@@ -45,6 +45,7 @@ http.createServer(async (req, res) => {
 <body><div class="box">
   <h2>חיבור WhatsApp</h2>
   <p class="sub">סרוק עם המספר הייעודי של הבוט</p>
+  <div id="banner" style="display:none;background:#e8f5e9;color:#25d366;padding:8px;border-radius:8px;font-weight:bold;margin-bottom:8px;font-size:14px"></div>
   <img id="qr-img" src="" alt="טוען QR..."/>
   <div id="status-msg">ממתין לסריקה...</div>
   <div class="step"><div class="dot active" id="d1"></div><span>ממתין לסריקה</span></div>
@@ -54,6 +55,7 @@ http.createServer(async (req, res) => {
 </div>
 <script>
 let lastStatus='waiting';
+let lastQR='';
 async function refresh(){
   try{
     const s=await fetch('/status').then(r=>r.json());
@@ -67,13 +69,24 @@ async function refresh(){
         document.getElementById('qr-img').style.opacity='0.3';
       } else if(s.status==='connected'){
         d2.className='dot active';d3.className='dot active';d4.className='dot active';
+        msg.style.color='#25d366';msg.style.fontWeight='bold';
         msg.textContent='✅ מחובר! הבוט פעיל.';
         document.getElementById('qr-img').style.display='none';
+        document.getElementById('banner').style.display='none';
       }
     }
     if(s.hasQR && s.status==='waiting'){
       const q=await fetch('/qr-image').then(r=>r.json());
-      if(q.img) document.getElementById('qr-img').src=q.img;
+      if(q.img && q.img!==lastQR){
+        lastQR=q.img;
+        const img=document.getElementById('qr-img');
+        img.src=q.img;
+        img.style.outline='4px solid #25d366';
+        const b=document.getElementById('banner');
+        b.style.display='block';
+        b.textContent='🔄 QR חדש — סרוק עכשיו!';
+        setTimeout(()=>{img.style.outline='none';b.style.display='none';},5000);
+      }
     }
   }catch(e){}
   setTimeout(refresh, 2000);
@@ -196,10 +209,19 @@ function parseOwnerCommand(text) {
 }
 
 console.log('מאתחל Puppeteer...');
+const CHROME_PATHS = [
+    'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+    'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
+];
+const fs = require('fs');
+const chromePath = CHROME_PATHS.find(p => fs.existsSync(p));
+if (chromePath) console.log('משתמש ב-Chrome:', chromePath);
+
 const client = new Client({
     authStrategy: new LocalAuth({ dataPath: process.env.DATA_PATH || './' }),
     puppeteer: {
         headless: true,
+        executablePath: chromePath || undefined,
         args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu']
     }
 });
