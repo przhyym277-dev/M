@@ -1,13 +1,31 @@
 require('dotenv').config();
 const http = require('http');
-const { Client, LocalAuth } = require('whatsapp-web.js');
-const qrcode = require('qrcode-terminal');
 const QRCode = require('qrcode');
 const Groq = require('groq-sdk');
 const crm = require('./crm');
+const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion } = require('@whiskeysockets/baileys');
+const { Boom } = require('@hapi/boom');
+const pino = require('pino');
+const fs = require('fs');
+
+const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
+const OWNER_NUMBER = process.env.OWNER_PHONE; // 972522091733
+const OWNER_LID = process.env.OWNER_LID;
+
+function isOwnerPhone(jid) {
+    return jid.includes(OWNER_NUMBER) || (OWNER_LID && jid.includes(OWNER_LID));
+}
+
+function getText(msg) {
+    return msg.message?.conversation
+        || msg.message?.extendedTextMessage?.text
+        || msg.message?.imageMessage?.caption
+        || '';
+}
 
 let currentQR = null;
-let botStatus = 'waiting'; // waiting | scanned | connected
+let botStatus = 'waiting';
+let sock = null;
 
 // Health check + QR server
 const PORT = process.env.PORT || 3000;
@@ -41,11 +59,12 @@ http.createServer(async (req, res) => {
   .dot.spin{background:#f5a623;animation:pulse 1s infinite}
   @keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
   #status-msg{margin-top:16px;font-size:13px;color:#888;min-height:20px}
+  #banner{display:none;background:#e8f5e9;color:#25d366;padding:8px;border-radius:8px;font-weight:bold;margin-bottom:8px;font-size:14px}
 </style></head>
 <body><div class="box">
   <h2>חיבור WhatsApp</h2>
   <p class="sub">סרוק עם המספר הייעודי של הבוט</p>
-  <div id="banner" style="display:none;background:#e8f5e9;color:#25d366;padding:8px;border-radius:8px;font-weight:bold;margin-bottom:8px;font-size:14px"></div>
+  <div id="banner"></div>
   <img id="qr-img" src="" alt="טוען QR..."/>
   <div id="status-msg">ממתין לסריקה...</div>
   <div class="step"><div class="dot active" id="d1"></div><span>ממתין לסריקה</span></div>
@@ -54,8 +73,7 @@ http.createServer(async (req, res) => {
   <div class="step"><div class="dot" id="d4"></div><span>מחובר ומוכן!</span></div>
 </div>
 <script>
-let lastStatus='waiting';
-let lastQR='';
+let lastStatus='waiting',lastQR='';
 async function refresh(){
   try{
     const s=await fetch('/status').then(r=>r.json());
@@ -63,50 +81,23 @@ async function refresh(){
       lastStatus=s.status;
       const msg=document.getElementById('status-msg');
       const d2=document.getElementById('d2'),d3=document.getElementById('d3'),d4=document.getElementById('d4');
-      if(s.status==='scanned'){
-        d2.className='dot active';d3.className='dot spin';
-        msg.textContent='QR נסרק! מתחבר...';
-        document.getElementById('qr-img').style.opacity='0.3';
-      } else if(s.status==='connected'){
-        d2.className='dot active';d3.className='dot active';d4.className='dot active';
-        msg.style.color='#25d366';msg.style.fontWeight='bold';
-        msg.textContent='✅ מחובר! הבוט פעיל.';
-        document.getElementById('qr-img').style.display='none';
-        document.getElementById('banner').style.display='none';
-      }
+      if(s.status==='scanned'){d2.className='dot active';d3.className='dot spin';msg.textContent='QR נסרק! מתחבר...';}
+      else if(s.status==='connected'){d2.className='dot active';d3.className='dot active';d4.className='dot active';msg.style.color='#25d366';msg.style.fontWeight='bold';msg.textContent='✅ מחובר! הבוט פעיל.';document.getElementById('qr-img').style.display='none';document.getElementById('banner').style.display='none';}
     }
-    if(s.hasQR && s.status==='waiting'){
+    if(s.hasQR&&s.status==='waiting'){
       const q=await fetch('/qr-image').then(r=>r.json());
-      if(q.img && q.img!==lastQR){
-        lastQR=q.img;
-        const img=document.getElementById('qr-img');
-        img.src=q.img;
-        img.style.outline='4px solid #25d366';
-        const b=document.getElementById('banner');
-        b.style.display='block';
-        b.textContent='🔄 QR חדש — סרוק עכשיו!';
-        setTimeout(()=>{img.style.outline='none';b.style.display='none';},5000);
-      }
+      if(q.img&&q.img!==lastQR){lastQR=q.img;const img=document.getElementById('qr-img');img.src=q.img;img.style.outline='4px solid #25d366';const b=document.getElementById('banner');b.style.display='block';b.textContent='🔄 QR חדש — סרוק עכשיו!';setTimeout(()=>{img.style.outline='none';b.style.display='none';},5000);}
     }
   }catch(e){}
-  setTimeout(refresh, 2000);
+  setTimeout(refresh,2000);
 }
 refresh();
-</script>
-</body></html>`);
+</script></body></html>`);
         return;
     }
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ status: 'ok' }));
 }).listen(PORT, () => console.log(`Server on port ${PORT} | QR: /qr`));
-
-const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
-const OWNER_NUMBER = process.env.OWNER_PHONE;
-const OWNER_LID = process.env.OWNER_LID;
-
-function isOwnerPhone(phone) {
-    return phone.includes(OWNER_NUMBER) || (OWNER_LID && phone.includes(OWNER_LID));
-}
 
 const SALES_PROMPT = `אתה "מאקס" — נציג המכירות של מאסטר קוד, חברה לבניית דפי נחיתה ופתרונות דיגיטליים.
 
@@ -116,49 +107,29 @@ const SALES_PROMPT = `אתה "מאקס" — נציג המכירות של מאס�
 - משפטים קצרים וברורים
 - אמוג'י במידה
 - מונחים טכניים באנגלית מותרים (SEO, Dashboard, API)
-- אם הלקוח אמר את שמו — השתמש בו בשיחה
 
 החבילות שלנו:
-1. 🚀 כניסה — ₪1,200
-   - דף נחיתה מעוצב ורספונסיבי
-   - טופס לידים + SEO בסיסי
-   - זמן אספקה: 48 שעות
-
-2. 📈 צמיחה דיגיטלית — ₪1,650
-   - כולל את כל חבילת כניסה
-   - אנימציות, Analytics, A/B Testing, חיבור WhatsApp
-   - תמיכה למשך חודשיים
-
-3. 💎 Full-Stack — ₪2,400
-   - כולל את כל חבילת צמיחה
-   - Backend, מסד נתונים, Dashboard, API
-   - תמיכה למשך שלושה חודשים
+1. 🚀 כניסה — ₪1,200 | דף נחיתה מעוצב, טופס לידים, SEO בסיסי | 48 שעות
+2. 📈 צמיחה דיגיטלית — ₪1,650 | + אנימציות, Analytics, WhatsApp | תמיכה 2 חודשים
+3. 💎 Full-Stack — ₪2,400 | + Backend, DB, Dashboard, API | תמיכה 3 חודשים
 
 תנאי תשלום: שליש מראש, יתרה במסירה. תוקף הצעה: 7 ימים.
+המטרה: לקבוע שיחת המשך עם יאיר. כשהלקוח מוכן — "מתי נוח לך לשיחה של 15 דקות?"
+אם לא יודע לענות — העבר ליאיר.
 
-המטרה שלך: לענות על שאלות ולקבוע שיחת המשך עם יאיר.
-כשהלקוח מביע עניין — הצע: "אשמח לקבוע עבורך שיחה קצרה של 15 דקות עם יאיר. מתי נוח לך?"
-
-בסוף כל תשובה, הוסף שורה נסתרת בפורמט הבא (לא תוצג ללקוח, לשימוש פנימי בלבד):
+בסוף כל תשובה הוסף:
 STATUS:[new|interested|meeting_scheduled|cold]
-NAME:[שם הלקוח אם אמר, אחרת UNKNOWN]
-
-אם אינך יודע לענות — ציין שאתה מעביר את הפנייה ליאיר ושיחזור בהקדם.`;
+NAME:[שם הלקוח או UNKNOWN]`;
 
 const ASSISTANT_PROMPT = `אתה עוזר אישי של יאיר, בעל מאסטר קוד.
-כתוב בעברית תקינה, ידידותית וקצרה.
-אתה יכול לעזור עם: ניסוח הודעות, רעיונות, תכנון, שאלות כלליות.
-ענה תמיד בעברית, במשפטים קצרים וממוקדים.`;
+כתוב בעברית תקינה, ידידותית וקצרה. עזור עם: ניסוח, רעיונות, תכנון, שאלות כלליות.`;
 
 const conversations = new Map();
 
 function parseAIReply(raw) {
     const statusMatch = raw.match(/STATUS:\s*([\w_]+)/);
     const nameMatch = raw.match(/NAME:\s*(.+)/);
-    const clean = raw
-        .replace(/STATUS:\s*[\w_]+/g, '')
-        .replace(/NAME:\s*.+/g, '')
-        .trim();
+    const clean = raw.replace(/STATUS:\s*[\w_]+/g, '').replace(/NAME:\s*.+/g, '').trim();
     return {
         reply: clean,
         status: statusMatch ? statusMatch[1] : null,
@@ -166,14 +137,12 @@ function parseAIReply(raw) {
     };
 }
 
-async function getAIResponse(userPhone, userMessage, isOwner) {
+async function getAIResponse(jid, userMessage, isOwner) {
     const systemPrompt = isOwner ? ASSISTANT_PROMPT : SALES_PROMPT;
-
-    if (!conversations.has(userPhone)) conversations.set(userPhone, []);
-    const history = conversations.get(userPhone);
+    if (!conversations.has(jid)) conversations.set(jid, []);
+    const history = conversations.get(jid);
     history.push({ role: 'user', content: userMessage });
     if (history.length > 20) history.splice(0, history.length - 20);
-
     try {
         const response = await groq.chat.completions.create({
             model: 'llama-3.3-70b-versatile',
@@ -190,163 +159,140 @@ async function getAIResponse(userPhone, userMessage, isOwner) {
     }
 }
 
-// פירוש פקודות בעל עסק
 function parseOwnerCommand(text) {
     const t = text.trim();
-
     if (/^לקוחות$|^רשימה$/.test(t)) return { cmd: 'list' };
-
     const sendMatch = t.match(/^שלח(?:\s+\S+)?\s+ל([0-9]+)\s+(.+)$/s);
     if (sendMatch) return { cmd: 'send', phone: sendMatch[1], msg: sendMatch[2].trim() };
-
     const historyMatch = t.match(/^היסטוריה\s+([0-9]+)$/);
     if (historyMatch) return { cmd: 'history', phone: historyMatch[1] };
-
     const statusMatch = t.match(/^סטטוס\s+([0-9]+)\s+(.+)$/);
     if (statusMatch) return { cmd: 'setstatus', phone: statusMatch[1], status: statusMatch[2].trim() };
-
     return null;
 }
 
-console.log('מאתחל Puppeteer...');
-const CHROME_PATHS = [
-    'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
-    'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
-];
-const fs = require('fs');
-const chromePath = CHROME_PATHS.find(p => fs.existsSync(p));
-if (chromePath) console.log('משתמש ב-Chrome:', chromePath);
+function normalizePhone(phone) {
+    if (phone.startsWith('0')) return '972' + phone.slice(1);
+    return phone;
+}
 
-const client = new Client({
-    authStrategy: new LocalAuth({ dataPath: process.env.DATA_PATH || './' }),
-    puppeteer: {
-        headless: true,
-        executablePath: chromePath || undefined,
-        args: [
-            '--no-sandbox',
-            '--disable-setuid-sandbox',
-            '--disable-dev-shm-usage',
-            '--disable-gpu',
-            '--disable-extensions',
-            '--disable-default-apps',
-            '--no-first-run',
-            '--memory-pressure-off',
-            '--disable-background-timer-throttling',
-            '--disable-backgrounding-occluded-windows',
-            '--disable-renderer-backgrounding'
-        ]
-    }
-});
-client.on('loading_screen', (percent, message) => {
-    console.log(`טוען: ${percent}% - ${message}`);
-});
-process.on('unhandledRejection', (err) => console.error('שגיאה:', err.message));
+async function startBot() {
+    const { state, saveCreds } = await useMultiFileAuthState('./auth_state');
+    const { version } = await fetchLatestBaileysVersion();
 
-client.on('qr', (qr) => {
-    currentQR = qr;
-    botStatus = 'waiting';
-    console.log('\n📱 סרוק QR בדפדפן: https://mastercode-whatsapp-agent.onrender.com/qr\n');
-    qrcode.generate(qr, { small: true });
-});
+    sock = makeWASocket({
+        version,
+        auth: state,
+        logger: pino({ level: 'silent' }),
+        printQRInTerminal: true,
+        browser: ['מאקס', 'Chrome', '1.0']
+    });
 
-client.on('authenticated', () => {
-    botStatus = 'scanned';
-    currentQR = null;
-    console.log('🔄 QR נסרק — מתחבר...');
-});
+    sock.ev.on('creds.update', saveCreds);
 
-client.on('disconnected', (reason) => {
-    console.log('⚠️ התנתק:', reason);
-    botStatus = 'waiting';
-});
-
-client.on('ready', () => {
-    botStatus = 'connected';
-    currentQR = null;
-    console.log('✅ מאקס מוכן ומחובר!');
-});
-
-client.on('message', async (message) => {
-    try {
-    if (message.from === 'status@broadcast') return;
-    if (message.fromMe) return;
-    if (message.from.includes('@g.us')) return;
-
-    const userPhone = message.from;
-    const userText = message.body;
-    const isOwner = isOwnerPhone(userPhone);
-
-    console.log(`📩 [${isOwner ? 'יאיר' : userPhone}]: ${userText}`);
-
-    // פקודות בעל עסק
-    if (isOwner) {
-        const cmd = parseOwnerCommand(userText);
-
-        if (cmd?.cmd === 'list') {
-            await message.reply(crm.formatList());
-            return;
+    sock.ev.on('connection.update', ({ connection, lastDisconnect, qr }) => {
+        if (qr) {
+            currentQR = qr;
+            botStatus = 'waiting';
+            console.log('📱 QR זמין — פתח /qr לסריקה');
         }
+        if (connection === 'open') {
+            currentQR = null;
+            botStatus = 'connected';
+            console.log('✅ מאקס מוכן ומחובר!');
+        }
+        if (connection === 'connecting') {
+            botStatus = 'scanned';
+            console.log('🔄 מתחבר...');
+        }
+        if (connection === 'close') {
+            const code = new Boom(lastDisconnect?.error)?.output?.statusCode;
+            const shouldReconnect = code !== DisconnectReason.loggedOut;
+            console.log('⚠️ התנתק, קוד:', code, '| מתחבר שוב:', shouldReconnect);
+            botStatus = 'waiting';
+            if (shouldReconnect) setTimeout(startBot, 3000);
+        }
+    });
 
-        if (cmd?.cmd === 'send') {
-            const normalized = cmd.phone.startsWith('0')
-                ? '972' + cmd.phone.slice(1)
-                : cmd.phone;
-            const targetPhone = normalized + '@c.us';
+    sock.ev.on('messages.upsert', async ({ messages, type }) => {
+        if (type !== 'notify') return;
+        for (const msg of messages) {
             try {
-                await client.sendMessage(targetPhone, cmd.msg);
-                crm.addLog(targetPhone, 'out', cmd.msg);
-                await message.reply(`✅ ההודעה נשלחה ל-${cmd.phone}`);
+                if (msg.key.fromMe) continue;
+                const jid = msg.key.remoteJid;
+                if (!jid || jid === 'status@broadcast') continue;
+                if (jid.endsWith('@g.us')) continue;
+
+                const userText = getText(msg);
+                if (!userText) continue;
+
+                const isOwner = isOwnerPhone(jid);
+                console.log(`📩 [${isOwner ? 'יאיר' : jid}]: ${userText}`);
+
+                if (isOwner) {
+                    const cmd = parseOwnerCommand(userText);
+                    if (cmd?.cmd === 'list') {
+                        await sock.sendMessage(jid, { text: crm.formatList() });
+                        continue;
+                    }
+                    if (cmd?.cmd === 'send') {
+                        const normalized = normalizePhone(cmd.phone);
+                        const targetJid = normalized + '@s.whatsapp.net';
+                        try {
+                            await sock.sendMessage(targetJid, { text: cmd.msg });
+                            crm.addLog(targetJid, 'out', cmd.msg);
+                            await sock.sendMessage(jid, { text: `✅ ההודעה נשלחה ל-${cmd.phone}` });
+                        } catch (err) {
+                            await sock.sendMessage(jid, { text: `❌ שגיאה: ${err.message}` });
+                        }
+                        continue;
+                    }
+                    if (cmd?.cmd === 'history') {
+                        const ph = normalizePhone(cmd.phone) + '@s.whatsapp.net';
+                        await sock.sendMessage(jid, { text: crm.formatHistory(ph) });
+                        continue;
+                    }
+                    if (cmd?.cmd === 'setstatus') {
+                        const ph = normalizePhone(cmd.phone) + '@s.whatsapp.net';
+                        crm.setStatus(ph, cmd.status);
+                        await sock.sendMessage(jid, { text: `✅ סטטוס עודכן ל-${cmd.status}` });
+                        continue;
+                    }
+                }
+
+                const { reply, understood, status, name } = await getAIResponse(jid, userText, isOwner);
+
+                if (!understood || !reply) {
+                    console.log(`❌ Groq נכשל`);
+                    if (!isOwner) {
+                        await sock.sendMessage(jid, { text: 'תודה על פנייתך. אני מעביר ליאיר והוא יחזור אליך בהקדם.' });
+                        await sock.sendMessage(OWNER_NUMBER + '@s.whatsapp.net', {
+                            text: `🔔 לקוח ממתין\nמספר: ${jid}\nהודעה: "${userText}"`
+                        });
+                    } else {
+                        await sock.sendMessage(jid, { text: '❌ שגיאה בחיבור ל-AI.' });
+                    }
+                    continue;
+                }
+
+                console.log(`💬 שולח תשובה ל-${isOwner ? 'יאיר' : jid}`);
+
+                if (!isOwner) {
+                    crm.getOrCreate(jid);
+                    crm.addLog(jid, 'in', userText);
+                    crm.addLog(jid, 'out', reply);
+                    if (status) crm.setStatus(jid, status);
+                    if (name) crm.setName(jid, name);
+                }
+
+                await sock.sendMessage(jid, { text: reply }, { quoted: msg });
+
             } catch (err) {
-                await message.reply(`❌ שגיאה בשליחה: ${err.message}`);
+                console.error('❌ שגיאה בהודעה:', err.message);
             }
-            return;
         }
+    });
+}
 
-        if (cmd?.cmd === 'history') {
-            const ph = cmd.phone.startsWith('972') ? cmd.phone + '@c.us' : '972' + cmd.phone.replace(/^0/, '') + '@c.us';
-            await message.reply(crm.formatHistory(ph));
-            return;
-        }
-
-        if (cmd?.cmd === 'setstatus') {
-            const ph = cmd.phone.startsWith('972') ? cmd.phone + '@c.us' : '972' + cmd.phone.replace(/^0/, '') + '@c.us';
-            crm.setStatus(ph, cmd.status);
-            await message.reply(`✅ סטטוס עודכן ל-${cmd.status}`);
-            return;
-        }
-    }
-
-    // שיחה רגילה
-    const { reply, understood, status, name } = await getAIResponse(userPhone, userText, isOwner);
-
-    if (!understood || !reply) {
-        console.log(`❌ Groq לא הצליח לענות ל-${isOwner ? 'יאיר' : userPhone}`);
-        if (!isOwner) {
-            await message.reply('תודה על פנייתך. אני מעביר את הבקשה ליאיר והוא יחזור אליך בהקדם.');
-            await client.sendMessage(
-                OWNER_NUMBER + '@c.us',
-                `🔔 לקוח ממתין לתשובה\nמספר: ${userPhone}\nהודעה: "${userText}"`
-            );
-        } else {
-            await message.reply('❌ שגיאה בחיבור ל-AI. בדוק את ה-GROQ_API_KEY.');
-        }
-        return;
-    }
-    console.log(`💬 שולח תשובה ל-${isOwner ? 'יאיר' : userPhone}`);
-
-    // עדכון CRM ללקוחות (לא לבעל העסק)
-    if (!isOwner) {
-        crm.getOrCreate(userPhone);
-        crm.addLog(userPhone, 'in', userText);
-        crm.addLog(userPhone, 'out', reply);
-        if (status) crm.setStatus(userPhone, status);
-        if (name) crm.setName(userPhone, name);
-    }
-
-    await message.reply(reply);
-    } catch (err) {
-        console.error('❌ שגיאה בטיפול בהודעה:', err.message);
-    }
-});
-
-client.initialize();
+process.on('unhandledRejection', (err) => console.error('שגיאה:', err.message));
+startBot();
