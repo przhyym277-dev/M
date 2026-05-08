@@ -12,6 +12,7 @@
   "license": "ISC",
   "type": "commonjs",
   "dependencies": {
+    "@fontsource/heebo": "^5.2.8",
     "@whiskeysockets/baileys": "^7.0.0-rc10",
     "dotenv": "^17.4.2",
     "groq-sdk": "^1.1.2",
