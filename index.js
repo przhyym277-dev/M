@@ -17,11 +17,11 @@ http.createServer(async (req, res) => {
             res.end('<h2>הבוט כבר מחובר, אין צורך בסריקה</h2>');
             return;
         }
-        const imgData = await QRCode.toDataURL(currentQR);
+        const imgData = await QRCode.toDataURL(currentQR, { width: 256, margin: 2 });
         res.writeHead(200, { 'Content-Type': 'text/html' });
         res.end(`<!DOCTYPE html><html><head><meta http-equiv="refresh" content="20"/></head><body style="display:flex;justify-content:center;align-items:center;height:100vh;flex-direction:column;font-family:sans-serif;background:#fff;margin:0">
             <h2 style="font-size:22px;margin-bottom:10px">סרוק עם WhatsApp של המספר הייעודי</h2>
-            <img src="${imgData}" style="width:400px;height:400px"/>
+            <img src="${imgData}" style="width:256px;height:256px"/>
             <p style="color:#888;margin-top:10px">מתרענן אוטומטית כל 20 שניות</p>
         </body></html>`);
         return;
