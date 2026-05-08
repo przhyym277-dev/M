@@ -1,0 +1,5 @@
+2026/05/08-15:54:19.840 36e0 Creating DB C:\Users\przyy\Desktop\whatsapp-agent\session\Default\IndexedDB\https_web.whatsapp.com_0.indexeddb.leveldb since it was missing.
+2026/05/08-15:54:19.853 36e0 Reusing MANIFEST C:\Users\przyy\Desktop\whatsapp-agent\session\Default\IndexedDB\https_web.whatsapp.com_0.indexeddb.leveldb/MANIFEST-000001
+2026/05/08-15:54:57.427 6c40 Level-0 table #5: started
+2026/05/08-15:54:57.466 6c40 Level-0 table #5: 1070728 bytes OK
+2026/05/08-15:54:57.473 6c40 Delete type=0 #3
