@@ -18,6 +18,7 @@ function getOrCreate(phone) {
         db[phone] = {
             phone,
             name: null,
+            email: null,
             status: 'new',
             firstSeen: new Date().toISOString(),
             lastSeen: new Date().toISOString(),
@@ -64,6 +65,13 @@ function setName(phone, name) {
     save(db);
 }
 
+function setEmail(phone, email) {
+    const db = load();
+    if (!db[phone]) getOrCreate(phone);
+    db[phone].email = email;
+    save(db);
+}
+
 function getAll() {
     return load();
 }
@@ -90,7 +98,8 @@ function formatList() {
         const emoji = STATUS_EMOJI[c.status] || '•';
         const name = c.name || c.phone;
         const last = c.log.length ? c.log[c.log.length - 1].text.substring(0, 40) : '—';
-        return `${emoji} *${name}*\nסטטוס: ${c.status} | ${c.phone}\nאחרון: ${last}`;
+        const emailLine = c.email ? `\n📧 ${c.email}` : '';
+        return `${emoji} *${name}*\nסטטוס: ${c.status} | ${c.phone}${emailLine}\nאחרון: ${last}`;
     }).join('\n\n');
 }
 
@@ -101,7 +110,8 @@ function formatHistory(phone) {
     const lines = c.log.slice(-15).map(l =>
         `[${l.time}] ${l.direction === 'in' ? '👤' : '🤖'} ${l.text}`
     );
-    return `📋 *היסטוריה — ${name}*\nסטטוס: ${c.status}\n\n${lines.join('\n') || 'אין הודעות'}`;
+    const emailHeader = c.email ? `\n📧 ${c.email}` : '';
+    return `📋 *היסטוריה — ${name}*\nסטטוס: ${c.status}${emailHeader}\n\n${lines.join('\n') || 'אין הודעות'}`;
 }
 
-module.exports = { getOrCreate, addLog, setStatus, setName, getAll, getCustomer, formatList, formatHistory };
+module.exports = { getOrCreate, addLog, setStatus, setName, setEmail, getAll, getCustomer, formatList, formatHistory };

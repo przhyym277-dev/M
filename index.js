@@ -3,6 +3,7 @@ const http = require('http');
 const QRCode = require('qrcode');
 const Groq = require('groq-sdk');
 const crm = require('./crm');
+const { generateQuote } = require('./quote');
 const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion } = require('@whiskeysockets/baileys');
 const { Boom } = require('@hapi/boom');
 const pino = require('pino');
@@ -14,6 +15,9 @@ const OWNER_JID = OWNER_NUMBER + '@s.whatsapp.net';
 
 // 'assistant' | 'lead' — owner can switch modes
 let ownerMode = 'assistant';
+
+// Pending price quote approvals: Map<customerJid, { name, packageName, packageDetails }>
+const pendingQuotes = new Map();
 
 function isOwnerPhone(jid) {
     return jid.includes(OWNER_NUMBER) || (OWNER_LID && jid.includes(OWNER_LID));
@@ -102,27 +106,44 @@ refresh();
     res.end(JSON.stringify({ status: 'ok' }));
 }).listen(PORT, () => console.log(`Server on port ${PORT} | QR: /qr`));
 
-const SALES_PROMPT = `אתה "מאקס" — נציג המכירות של מאסטר קוד, חברה לבניית דפי נחיתה ופתרונות דיגיטליים.
+const PACKAGES = {
+    'כניסה':             { details: 'דף נחיתה מעוצב, טופס לידים, SEO בסיסי | 48 שעות' },
+    'צמיחה דיגיטלית':   { details: '+ אנימציות, Analytics, WhatsApp | תמיכה 2 חודשים' },
+    'full-stack':        { details: '+ Backend, DB, Dashboard, API | תמיכה 3 חודשים' },
+};
+
+const SALES_PROMPT = `אתה "מאקס" — נציג מכירות של מאסטר קוד, חברה לבניית דפי נחיתה ופתרונות דיגיטליים.
 
 כללי שפה:
-- כתוב אך ורק בעברית תקינה ומקצועית
-- סגנון: מנומס, חם, מקצועי — לא רשמי מדי, לא סלנג
-- משפטים קצרים וברורים
+- עברית תקינה, חמה ומשכנעת — לא רשמי, לא סלנג
+- משפטים קצרים וחדים
+- תמיד תסיים עם שאלה שמקדמת את הסגירה
 - אמוג'י במידה
-- מונחים טכניים באנגלית מותרים (SEO, Dashboard, API)
 
-החבילות שלנו:
-1. 🚀 כניסה — ₪1,200 | דף נחיתה מעוצב, טופס לידים, SEO בסיסי | 48 שעות
+טכניקת מכירה:
+- שאל שאלות כדי להבין את הצורך לפני שאתה מציג מחיר
+- הדגש תוצאות ולא פיצ'רים ("לקוחות ימצאו אותך בגוגל" לא "SEO בסיסי")
+- כשהלקוח מתעניין — צור דחיפות: "יש לנו חלון פנוי השבוע"
+- התנגדות מחיר? חלק לתשלומים, הצג את הערך: "זה פחות מ-₪50 ליום"
+- מטרה: לקבוע שיחה עם יאיר. כשמוכן — "מתי נוח לך לשיחה קצרה של 15 דקות?"
+
+החבילות:
+1. 🚀 כניסה — ₪1,200 | דף נחיתה, טופס לידים, SEO | 48 שעות
 2. 📈 צמיחה דיגיטלית — ₪1,650 | + אנימציות, Analytics, WhatsApp | תמיכה 2 חודשים
 3. 💎 Full-Stack — ₪2,400 | + Backend, DB, Dashboard, API | תמיכה 3 חודשים
 
 תנאי תשלום: שליש מראש, יתרה במסירה. תוקף הצעה: 7 ימים.
-המטרה: לקבוע שיחת המשך עם יאיר. כשהלקוח מוכן — "מתי נוח לך לשיחה של 15 דקות?"
-אם לא יודע לענות — העבר ליאיר.
+
+איסוף מידע — נסה לקבל בטבעיות תוך כדי שיחה:
+- שם הלקוח
+- מייל (לשליחת הצעת מחיר)
+
+כשלקוח מבקש הצעת מחיר מפורטת או כשהוא מוכן — הוסף: QUOTE_REQUEST:[שם החבילה הכי מתאימה]
 
 בסוף כל תשובה הוסף:
 STATUS:[new|interested|meeting_scheduled|cold]
-NAME:[שם הלקוח או UNKNOWN]`;
+NAME:[שם הלקוח או UNKNOWN]
+EMAIL:[מייל הלקוח או UNKNOWN]`;
 
 const ASSISTANT_PROMPT = `אתה עוזר אישי חכם של יאיר — בעל מאסטר קוד, חברה לבניית דפי נחיתה ופתרונות דיגיטליים.
 
@@ -138,26 +159,33 @@ const ASSISTANT_PROMPT = `אתה עוזר אישי חכם של יאיר — בע
 - לענות על שאלות כלליות: טכנולוגיה, עסקים, שיווק דיגיטלי
 - לעזור עם קוד, לוגיקה, בעיות טכניות
 
-כשיאיר אומר "תציע לי רעיונות" — תן לפחות 3-5 רעיונות קונקרטיים, לא כלליים.
+כשיאיר אומר "תציע לי רעיונות" — תן לפחות 3-5 רעיונות קונקרטיים.
 כשיאיר שואל "מה אתה חושב על X" — תן חוות דעת ברורה עם נימוק קצר.`;
 
 const conversations = new Map();
 
 function parseAIReply(raw) {
     const statusMatch = raw.match(/STATUS:\s*([\w_]+)/);
-    const nameMatch = raw.match(/NAME:\s*(.+)/);
-    const clean = raw.replace(/STATUS:\s*[\w_]+/g, '').replace(/NAME:\s*.+/g, '').trim();
+    const nameMatch   = raw.match(/NAME:\s*(.+)/);
+    const emailMatch  = raw.match(/EMAIL:\s*(.+)/);
+    const quoteMatch  = raw.match(/QUOTE_REQUEST:\s*(.+)/);
+    const clean = raw
+        .replace(/STATUS:\s*[\w_]+/g, '')
+        .replace(/NAME:\s*.+/g, '')
+        .replace(/EMAIL:\s*.+/g, '')
+        .replace(/QUOTE_REQUEST:\s*.+/g, '')
+        .trim();
     return {
-        reply: clean,
-        status: statusMatch ? statusMatch[1] : null,
-        name: nameMatch && nameMatch[1] !== 'UNKNOWN' ? nameMatch[1].trim() : null
+        reply:        clean,
+        status:       statusMatch ? statusMatch[1] : null,
+        name:         nameMatch  && nameMatch[1].trim()  !== 'UNKNOWN' ? nameMatch[1].trim()  : null,
+        email:        emailMatch && emailMatch[1].trim() !== 'UNKNOWN' ? emailMatch[1].trim() : null,
+        quoteRequest: quoteMatch ? quoteMatch[1].trim() : null,
     };
 }
 
 async function getAIResponse(jid, userMessage, mode) {
-    // mode: 'assistant' | 'sales'
-    const isAssistant = mode === 'assistant';
-    const systemPrompt = isAssistant ? ASSISTANT_PROMPT : SALES_PROMPT;
+    const systemPrompt = mode === 'assistant' ? ASSISTANT_PROMPT : SALES_PROMPT;
     if (!conversations.has(jid)) conversations.set(jid, []);
     const history = conversations.get(jid);
     history.push({ role: 'user', content: userMessage });
@@ -181,8 +209,17 @@ async function getAIResponse(jid, userMessage, mode) {
 function parseOwnerCommand(text) {
     const t = text.trim();
     if (/^לקוחות$|^רשימה$/.test(t)) return { cmd: 'list' };
-    if (/^עבור למצב ליד$|^מצב ליד$/.test(t)) return { cmd: 'mode_lead' };
+    if (/^מי דיבר$|^שמות$/.test(t))  return { cmd: 'names' };
+    if (/^עבור למצב ליד$|^מצב ליד$/.test(t))           return { cmd: 'mode_lead' };
     if (/^חזור למצב רגיל$|^מצב רגיל$|^חזור$/.test(t)) return { cmd: 'mode_assistant' };
+
+    // מחיר 1650  |  מחיר 0521234567 1650
+    const priceMatch = t.match(/^מחיר\s+([0-9]+)(?:\s+([0-9]+))?$/);
+    if (priceMatch) {
+        if (priceMatch[2]) return { cmd: 'approve_quote', phone: priceMatch[1], amount: Number(priceMatch[2]) };
+        return { cmd: 'approve_quote', phone: null, amount: Number(priceMatch[1]) };
+    }
+
     const sendMatch = t.match(/^שלח(?:\s+\S+)?\s+ל([0-9]+)\s+(.+)$/s);
     if (sendMatch) return { cmd: 'send', phone: sendMatch[1], msg: sendMatch[2].trim() };
     const historyMatch = t.match(/^היסטוריה\s+([0-9]+)$/);
@@ -197,12 +234,23 @@ function normalizePhone(phone) {
     return phone;
 }
 
+function formatNamesList() {
+    const db = crm.getAll();
+    const customers = Object.values(db);
+    if (customers.length === 0) return 'אין לקוחות עדיין.';
+    const STATUS_EMOJI = { new: '🆕', interested: '🔥', meeting_scheduled: '📅', closed: '✅', cold: '❄️' };
+    return '*מי דיבר עם הבוט:*\n\n' + customers.map(c => {
+        const emoji = STATUS_EMOJI[c.status] || '•';
+        const name  = c.name || c.phone;
+        const email = c.email ? ` | 📧 ${c.email}` : '';
+        return `${emoji} ${name}${email}`;
+    }).join('\n');
+}
+
 async function notifyOwner(text) {
     if (!sock || botStatus !== 'connected') return;
-    try {
-        await sock.sendMessage(OWNER_JID, { text });
-    } catch (err) {
-        console.error('שגיאה בשליחת התראה לבעלים:', err.message);
+    try { await sock.sendMessage(OWNER_JID, { text }); } catch (err) {
+        console.error('שגיאה בהתראה לבעלים:', err.message);
     }
 }
 
@@ -221,20 +269,9 @@ async function startBot() {
     sock.ev.on('creds.update', saveCreds);
 
     sock.ev.on('connection.update', ({ connection, lastDisconnect, qr }) => {
-        if (qr) {
-            currentQR = qr;
-            botStatus = 'waiting';
-            console.log('📱 QR זמין — פתח /qr לסריקה');
-        }
-        if (connection === 'open') {
-            currentQR = null;
-            botStatus = 'connected';
-            console.log('✅ מאקס מוכן ומחובר!');
-        }
-        if (connection === 'connecting') {
-            botStatus = 'scanned';
-            console.log('🔄 מתחבר...');
-        }
+        if (qr) { currentQR = qr; botStatus = 'waiting'; console.log('📱 QR זמין — פתח /qr לסריקה'); }
+        if (connection === 'open')       { currentQR = null; botStatus = 'connected'; console.log('✅ מאקס מוכן ומחובר!'); }
+        if (connection === 'connecting') { botStatus = 'scanned'; console.log('🔄 מתחבר...'); }
         if (connection === 'close') {
             const code = new Boom(lastDisconnect?.error)?.output?.statusCode;
             const shouldReconnect = code !== DisconnectReason.loggedOut;
@@ -266,21 +303,69 @@ async function startBot() {
                         await sock.sendMessage(jid, { text: crm.formatList() });
                         continue;
                     }
+                    if (cmd?.cmd === 'names') {
+                        await sock.sendMessage(jid, { text: formatNamesList() });
+                        continue;
+                    }
                     if (cmd?.cmd === 'mode_lead') {
                         ownerMode = 'lead';
-                        conversations.delete(jid); // reset conversation for clean simulation
-                        await sock.sendMessage(jid, { text: '🎭 *מצב ליד פעיל*\nאני מדבר אליך עכשיו כאילו אתה לקוח. תדמה שאתה פונה לראשונה.\nלחזרה: "חזור למצב רגיל"' });
+                        conversations.delete(jid);
+                        await sock.sendMessage(jid, { text: '🎭 *מצב ליד פעיל*\nאני מדבר אליך כאילו אתה לקוח חדש.\nלחזרה: "חזור למצב רגיל"' });
                         continue;
                     }
                     if (cmd?.cmd === 'mode_assistant') {
                         ownerMode = 'assistant';
-                        conversations.delete(jid); // reset conversation
+                        conversations.delete(jid);
                         await sock.sendMessage(jid, { text: '✅ *חזרתי למצב עוזר אישי*\nמה תרצה?' });
+                        continue;
+                    }
+                    if (cmd?.cmd === 'approve_quote') {
+                        // Find which customer to send the quote to
+                        let targetJid = null;
+                        let quoteData = null;
+
+                        if (cmd.phone) {
+                            // Owner specified a phone number
+                            targetJid = normalizePhone(cmd.phone) + '@s.whatsapp.net';
+                            quoteData = pendingQuotes.get(targetJid);
+                        } else {
+                            // Take the first pending quote
+                            const first = pendingQuotes.entries().next().value;
+                            if (first) { targetJid = first[0]; quoteData = first[1]; }
+                        }
+
+                        if (!targetJid || !quoteData) {
+                            await sock.sendMessage(jid, { text: '❌ אין הצעת מחיר ממתינה. ציין מספר: מחיר [טלפון] [סכום]' });
+                            continue;
+                        }
+
+                        pendingQuotes.delete(targetJid);
+
+                        try {
+                            const pdfBuf = await generateQuote({
+                                customerName:   quoteData.name || 'לקוח',
+                                packageName:    quoteData.packageName,
+                                packageDetails: quoteData.packageDetails,
+                                price:          cmd.amount,
+                            });
+                            const fileName = `הצעת מחיר - ${quoteData.name || 'לקוח'}.pdf`;
+                            await sock.sendMessage(targetJid, {
+                                document: pdfBuf,
+                                mimetype: 'application/pdf',
+                                fileName,
+                                caption: `📄 הצעת המחיר שלך מוכנה! לשאלות — אני כאן 😊`
+                            });
+                            crm.addLog(targetJid, 'out', `[הצעת מחיר נשלחה: ${quoteData.packageName} ₪${cmd.amount}]`);
+                            await sock.sendMessage(jid, { text: `✅ הצעת מחיר נשלחה ל-${quoteData.name || targetJid} — ${quoteData.packageName} ₪${cmd.amount}` });
+                        } catch (err) {
+                            console.error('שגיאה ביצירת PDF:', err.message);
+                            await sock.sendMessage(jid, { text: `❌ שגיאה ביצירת PDF: ${err.message}` });
+                        }
                         continue;
                     }
                     if (cmd?.cmd === 'send') {
                         const normalized = normalizePhone(cmd.phone);
-                        const targetJid = normalized + '@s.whatsapp.net';
+                        const targetJid  = normalized + '@s.whatsapp.net';
                         try {
                             await sock.sendMessage(targetJid, { text: cmd.msg });
                             crm.addLog(targetJid, 'out', cmd.msg);
@@ -303,14 +388,11 @@ async function startBot() {
                     }
                 }
 
-                // Determine AI mode
                 const aiMode = isOwner ? ownerMode : 'sales';
 
                 // Typing indicator
                 await sock.sendPresenceUpdate('composing', jid);
-
-                const { reply, understood, status, name } = await getAIResponse(jid, userText, aiMode);
-
+                const { reply, understood, status, name, email, quoteRequest } = await getAIResponse(jid, userText, aiMode);
                 await sock.sendPresenceUpdate('paused', jid);
 
                 if (!understood || !reply) {
@@ -324,8 +406,6 @@ async function startBot() {
                     continue;
                 }
 
-                console.log(`💬 שולח תשובה ל-${isOwner ? `יאיר (${ownerMode})` : jid}`);
-
                 if (!isOwner) {
                     crm.getOrCreate(jid);
                     crm.addLog(jid, 'in', userText);
@@ -333,20 +413,34 @@ async function startBot() {
 
                     const prevStatus = crm.getCustomer(jid)?.status;
                     if (status) crm.setStatus(jid, status);
-                    if (name) crm.setName(jid, name);
+                    if (name)   crm.setName(jid, name);
+                    if (email)  crm.setEmail(jid, email);
 
-                    // Notify owner on hot leads
+                    // Hot lead notifications
                     if (status && status !== prevStatus) {
                         if (status === 'meeting_scheduled') {
-                            const displayName = name || jid;
-                            await notifyOwner(`🔥 *ליד חם!* ${displayName} רוצה לקבוע פגישה!\nמספר: ${jid}\nהודעה אחרונה: "${userText}"`);
+                            await notifyOwner(`🔥 *ליד חם!* ${name || jid} רוצה לקבוע פגישה!\nמספר: ${jid}\nהודעה: "${userText}"`);
                         } else if (status === 'interested') {
-                            const displayName = name || jid;
-                            await notifyOwner(`⚡ *${displayName} מתעניין!*\nמספר: ${jid}`);
+                            await notifyOwner(`⚡ *${name || jid} מתעניין!*\nמספר: ${jid}`);
                         }
+                    }
+
+                    // Quote request — ask owner for approval
+                    if (quoteRequest) {
+                        const pkgKey = Object.keys(PACKAGES).find(k => quoteRequest.toLowerCase().includes(k.toLowerCase())) || quoteRequest;
+                        const pkgDetails = PACKAGES[pkgKey]?.details || quoteRequest;
+                        pendingQuotes.set(jid, { name: name || null, packageName: pkgKey, packageDetails: pkgDetails });
+                        await notifyOwner(
+                            `💼 *${name || jid} מבקש הצעת מחיר*\n` +
+                            `מספר: ${jid}\n` +
+                            `חבילה: ${pkgKey}\n` +
+                            (email ? `מייל: ${email}\n` : '') +
+                            `\nשלח: *מחיר [סכום]* כדי לשלוח PDF ללקוח`
+                        );
                     }
                 }
 
+                console.log(`💬 תשובה ל-${isOwner ? `יאיר (${ownerMode})` : jid}`);
                 await sock.sendMessage(jid, { text: reply }, { quoted: msg });
 
             } catch (err) {
