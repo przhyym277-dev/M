@@ -234,6 +234,7 @@ async function getAIResponse(jid, userMessage, mode) {
 
 function parseOwnerCommand(text) {
     const t = text.trim();
+    if (/^נקה הכל$|^מחק הכל$/.test(t)) return { cmd: 'clear_all' };
     if (/^לקוחות$|^רשימה$/.test(t)) return { cmd: 'list' };
     if (/^מי דיבר$|^שמות$/.test(t))  return { cmd: 'names' };
     if (/^עבור למצב ליד$|^מצב ליד$/.test(t))           return { cmd: 'mode_lead' };
@@ -333,6 +334,15 @@ async function startBot() {
                 if (isOwner) {
                     const cmd = parseOwnerCommand(userText);
 
+                    if (cmd?.cmd === 'clear_all') {
+                        conversations.clear();
+                        const fs = require('fs');
+                        const crmPath = require('path').join(__dirname, 'crm.json');
+                        fs.writeFileSync(crmPath, '{}', 'utf8');
+                        pendingQuotes.clear();
+                        await sock.sendMessage(jid, { text: '🗑️ נמחק הכל — CRM, היסטוריית שיחות, הצעות ממתינות.' });
+                        continue;
+                    }
                     if (cmd?.cmd === 'list') {
                         await sock.sendMessage(jid, { text: crm.formatList() });
                         continue;
