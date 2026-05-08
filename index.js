@@ -1,14 +1,14 @@
 require('dotenv').config();
 const http = require('http');
 const QRCode = require('qrcode');
-const { GoogleGenerativeAI } = require('@google/generative-ai');
+const Groq = require('groq-sdk');
 const crm = require('./crm');
 const { generateQuote } = require('./quote');
 const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion } = require('@whiskeysockets/baileys');
 const { Boom } = require('@hapi/boom');
 const pino = require('pino');
 
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 const OWNER_NUMBER = process.env.OWNER_PHONE;
 const OWNER_LID = process.env.OWNER_LID;
 const OWNER_JID = OWNER_NUMBER + '@s.whatsapp.net';
@@ -201,21 +201,20 @@ async function getAIResponse(jid, userMessage, mode) {
     const systemPrompt = mode === 'assistant' ? ASSISTANT_PROMPT : SALES_PROMPT;
     if (!conversations.has(jid)) conversations.set(jid, []);
     const history = conversations.get(jid);
-    history.push({ role: 'user', parts: [{ text: userMessage }] });
-    if (history.length > 20) history.splice(0, history.length - 20);
+    history.push({ role: 'user', content: userMessage });
+    if (history.length > 16) history.splice(0, history.length - 16);
     try {
-        const model = genAI.getGenerativeModel({
-            model: 'gemini-2.0-flash-lite',
-            systemInstruction: systemPrompt,
-            generationConfig: { maxOutputTokens: 500, temperature: 0.7 }
+        const completion = await groq.chat.completions.create({
+            model: 'llama-3.3-70b-versatile',
+            messages: [{ role: 'system', content: systemPrompt }, ...history],
+            max_tokens: 500,
+            temperature: 0.7,
         });
-        const chat = model.startChat({ history: history.slice(0, -1) });
-        const result = await chat.sendMessage(userMessage);
-        const raw = result.response.text();
-        history.push({ role: 'model', parts: [{ text: raw }] });
+        const raw = completion.choices[0]?.message?.content || '';
+        history.push({ role: 'assistant', content: raw });
         return { ...parseAIReply(raw), understood: true };
     } catch (err) {
-        console.error('Gemini error:', err.message);
+        console.error('Groq error:', err.message);
         return { reply: null, understood: false };
     }
 }
@@ -432,7 +431,7 @@ async function startBot() {
                 await presence('paused');
 
                 if (!understood || !reply) {
-                    console.log(`❌ Gemini נכשל`);
+                    console.log(`❌ Groq נכשל`);
                     if (!isOwner) {
                         await sock.sendMessage(jid, { text: 'רגע אחד, בודק עבורך... 🔄' });
                         await notifyOwner(`🔔 לקוח ממתין לתשובה\nשם: ${crm.getCustomer(jid)?.name || 'לא ידוע'}\nמספר: ${jidToPhone(jid)}\nהודעה: "${userText}"`);
