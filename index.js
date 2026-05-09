@@ -27,6 +27,13 @@ const pendingQuotes = new Map();
 const activeReminders = [];
 let reminderIdCounter = 1;
 
+// Projects & income (loaded from env, saved to Render)
+function loadJSON(key, fallback = []) {
+    try { return JSON.parse(process.env[key] || 'null') || fallback; } catch { return fallback; }
+}
+let projects = loadJSON('PROJECTS_DATA');
+let incomeLog = loadJSON('INCOME_DATA');
+
 async function parseReminderIntent(text) {
     const now = new Date().toLocaleString('he-IL', { timeZone: 'Asia/Jerusalem' });
     try {
@@ -103,14 +110,40 @@ function renderApiRequest(method, path, body) {
     });
 }
 
-async function saveKnowledgeToRender(knowledge) {
+async function saveEnvVar(key, value) {
     const data = await renderApiRequest('GET', `/v1/services/${RENDER_SERVICE_ID}/env-vars`);
     const arr = Array.isArray(data) ? data : [];
-    const existing = arr.map(e => ({ key: e.envVar.key, value: e.envVar.value }));
-    const merged = existing.filter(e => e.key !== 'BUSINESS_KNOWLEDGE');
-    merged.push({ key: 'BUSINESS_KNOWLEDGE', value: knowledge });
+    const merged = arr.map(e => ({ key: e.envVar.key, value: e.envVar.value }))
+        .filter(e => e.key !== key);
+    merged.push({ key, value: String(value) });
     await renderApiRequest('PUT', `/v1/services/${RENDER_SERVICE_ID}/env-vars`, merged);
-    process.env.BUSINESS_KNOWLEDGE = knowledge;
+    process.env[key] = String(value);
+}
+
+async function saveKnowledgeToRender(knowledge) { await saveEnvVar('BUSINESS_KNOWLEDGE', knowledge); }
+
+async function saveProjects() { await saveEnvVar('PROJECTS_DATA', JSON.stringify(projects)); }
+async function saveIncome()   { await saveEnvVar('INCOME_DATA',   JSON.stringify(incomeLog)); }
+
+function formatProjects() {
+    if (projects.length === 0) return '📋 אין פרויקטים פעילים.';
+    const STATUS_ICON = { 'פעיל': '🔵', 'עיצוב': '🎨', 'פיתוח': '⚙️', 'בדיקות': '🧪', 'מסירה': '📦', 'הושלם': '✅', 'הקפאה': '❄️' };
+    return '📋 *פרויקטים:*\n\n' + projects.map((p, i) => {
+        const icon = STATUS_ICON[p.status] || '🔵';
+        const price = p.price ? ` | ₪${Number(p.price).toLocaleString('he-IL')}` : '';
+        return `${i + 1}. ${icon} *${p.name}*${price}\nסטטוס: ${p.status} | לקוח: ${p.client || '—'}`;
+    }).join('\n\n');
+}
+
+function formatIncomeReport() {
+    if (incomeLog.length === 0) return '💰 אין הכנסות מתועדות.';
+    const now = new Date();
+    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+    const thisMonth = incomeLog.filter(e => new Date(e.date) >= monthStart);
+    const total = thisMonth.reduce((s, e) => s + e.amount, 0);
+    const allTime = incomeLog.reduce((s, e) => s + e.amount, 0);
+    const lines = thisMonth.map(e => `• ₪${e.amount.toLocaleString('he-IL')}${e.note ? ` — ${e.note}` : ''}`).join('\n');
+    return `💰 *הכנסות החודש:* ₪${total.toLocaleString('he-IL')}\n\n${lines || 'אין עדיין'}\n\n📊 סה"כ כל הזמנים: ₪${allTime.toLocaleString('he-IL')}`;
 }
 
 function isOwnerPhone(jid) {
@@ -250,29 +283,55 @@ STATUS:[new|interested|meeting_scheduled|cold]
 NAME:[שם הלקוח או UNKNOWN]
 EMAIL:[מייל הלקוח או UNKNOWN]`;
 
-const ASSISTANT_PROMPT = `אתה עוזר אישי חכם של יאיר.
+const ASSISTANT_PROMPT = `אתה השותף העסקי החכם של יאיר — לא סתם AI, אלא יועץ שמכיר את העסק לעומק.
 
-על יאיר:
-- בעל מאסטר קוד — חברה לבניית דפי נחיתה ופתרונות דיגיטליים בישראל
-- מתמחה: אתרים, SEO, בוטים לוואטסאפ, חנויות אונליין
-- טלפון: 0522091733
+זהות:
+- ישיר וחד — נותן תשובה, לא "זה תלוי..."
+- מכיר את השוק הישראלי: מע"מ 18%, שוטף+30/60/90, ביט/פייבוקס, חשבונית מס קבלה
+- יוזם — כשעוזר עם X, מציע גם את הצעד הבא הלוגי
+- אמיתי — אומר גם כשרעיון לא טוב
 
-האופי שלך:
-- ישיר, ידידותי, מעשי — לא פורמלי
-- עונה בעברית קצרה וחדה
-- נותן דעה אמיתית כשנשאל, לא "זה תלוי..."
-- כשמבקשים רעיונות — לפחות 3-5 קונקרטיים, לא כלליים
+על יאיר ועסקו:
+- בעל מאסטר קוד — דפי נחיתה, אתרים, בוטים לוואטסאפ, SEO
+- לקוחות: עסקים קטנים-בינוניים בישראל — קוזמטיקאיות, מאמנים, עורכי דין, יזמים
 
-תחומי עזרה — הכל:
-- עסקי: הצעות מחיר, ניסוח חוזים, מיילים ללקוחות, אסטרטגיה עסקית
-- ניסוח הודעות: מייל מקצועי, הודעת וואטסאפ, תשובה ללקוח קשה, הודעת גביה — תנסח מוכן לשליחה
-- שיווק: פוסטים לסושיאל, קמפיינים, כותרות, תיאורי מוצר
-- טכנולוגיה: קוד, בעיות טכניות, בחירת כלים
-- כללי: תכנון, החלטות, שאלות כלשהן — ספורט, בישול, חדשות, כל נושא
-- אישי: לוחות זמנים, רשימות משימות, כל מה שיאיר צריך
+מחשבון פרויקטים — כשמבקשים הערכה:
+פרק לרכיבים (עיצוב / פיתוח / תוכן / בדיקות), תן זמן בשעות ומחיר טווח מינימום–מקסימום.
+הוסף תמיד: "מה שישנה את המחיר: [גורמים]"
 
-כשמבקשים לנסח הודעה — תן את הטקסט המוכן ישר, בלי הסברים מסביב.
-אין נושא מחוץ לתחום — ענה על הכל.`;
+כללי תפוקה:
+- ניסוח הודעה/מייל → תן טקסט מוכן ישר, ללא הקדמות
+- אסטרטגיה → 3 אפשרויות עם יתרון/חיסרון + המלצה אחת
+- רעיונות → 3-5 קונקרטיים, לא כלליים
+- תמיד תסיים עם הצעד הבא המומלץ
+
+תחומי עזרה — הכל ללא יוצא מן הכלל:
+עסקי, שיווק, קוד, פוסטים לסושיאל, ניסוח חוזים, גביית חובות, ספורט, בישול — כל מה שיאיר צריך.`;
+
+const MEETING_PROMPT = `אתה יועץ מכירות בזמן אמת — יאיר בפגישה עם לקוח עכשיו.
+ענה קצר, חד, מוכן לאמירה — משפט אחד עד שניים מקסימום.
+
+כשלקוח מתנגד למחיר → תן משפט לאמירה עכשיו
+כשלקוח לא בטוח → תן שאלה שתסגור אותו
+כשלקוח שואל על מתחרה → תן יתרון אחד חד
+כשיאיר מבקש לסגור → תן "משפט הסגירה" — ישיר
+
+אל תסביר, אל תנתח — רק תן את המשפט לאמירה.`;
+
+const CRISIS_PROMPT = `אתה יועץ לניהול לקוח בעייתי — יאיר צריך עזרה עכשיו.
+תן תגובות מוכנות לשליחה ישירות ללקוח.
+
+לקוח כועס → הרגע תחילה, אל תתנצל יותר מדי, הצע פתרון ספציפי
+לקוח רוצה לבטל → שאל מה הבעיה, הצע תיקון — לא החזר כסף ישר
+לקוח לא מרוצה מעיצוב → הודה + הצע סבב תיקונים מוגדר
+לקוח לא משלם → תן הודעת גביה מנומסת אך נחרצת
+
+פורמט תגובה:
+💬 *לשלוח ללקוח:*
+[הטקסט המוכן]
+
+🧠 *האסטרטגיה:*
+[הסבר קצר למה]`;
 
 const LEARNING_PROMPT = `אתה לומד על העסק של יאיר כדי לעזור לו טוב יותר.
 שאל שאלה ממוקדת אחת בכל פעם — קצרה וברורה.
@@ -294,8 +353,10 @@ const LEARNING_PROMPT = `אתה לומד על העסק של יאיר כדי לע
 
 function buildSystemPrompt(mode) {
     const knowledge = process.env.BUSINESS_KNOWLEDGE;
-    const knowledgeBlock = knowledge ? `\n\n---\nידע על העסק (מעודכן על ידי יאיר):\n${knowledge}` : '';
+    const knowledgeBlock = knowledge ? `\n\n---\nידע על העסק:\n${knowledge}` : '';
     if (mode === 'learning') return LEARNING_PROMPT;
+    if (mode === 'meeting') return MEETING_PROMPT + knowledgeBlock;
+    if (mode === 'crisis')  return CRISIS_PROMPT  + knowledgeBlock;
     if (mode === 'assistant') return ASSISTANT_PROMPT + knowledgeBlock;
     return SALES_PROMPT + knowledgeBlock;
 }
@@ -364,6 +425,23 @@ function parseOwnerCommand(text) {
     if (/^תזכורות$|^תזכורות פעילות$/.test(t)) return { cmd: 'list_reminders' };
     if (/תזכיר לי|תזכורת ב/.test(t)) return { cmd: 'reminder', text: t };
     if (/^מחק תזכורת\s+(\d+)$/.test(t)) { const m = t.match(/^מחק תזכורת\s+(\d+)$/); return { cmd: 'delete_reminder', id: Number(m[1]) }; }
+    // Meeting & crisis modes
+    if (/^פגישה$|^מצב פגישה$/.test(t)) return { cmd: 'mode_meeting' };
+    if (/^לקוח בעייתי$|^לקוח כועס$|^משבר לקוח$/.test(t)) return { cmd: 'mode_crisis' };
+    // Projects
+    if (/^פרויקטים$/.test(t)) return { cmd: 'projects_list' };
+    const projNew = t.match(/^פרויקט חדש\s+(.+?)\s+(\d+)$/);
+    if (projNew) return { cmd: 'project_add', name: projNew[1], price: Number(projNew[2]) };
+    const projUpdate = t.match(/^עדכן\s+(.+?):\s*(.+)$/);
+    if (projUpdate) return { cmd: 'project_update', name: projUpdate[1].trim(), status: projUpdate[2].trim() };
+    const projClose = t.match(/^סגור פרויקט\s+(.+)$/);
+    if (projClose) return { cmd: 'project_close', name: projClose[1].trim() };
+    const projDel = t.match(/^מחק פרויקט\s+(.+)$/);
+    if (projDel) return { cmd: 'project_delete', name: projDel[1].trim() };
+    // Income
+    if (/^הכנסות$/.test(t)) return { cmd: 'income_report' };
+    const income = t.match(/^סגרתי\s+(\d+)(?:\s+(.+))?$/);
+    if (income) return { cmd: 'income_add', amount: Number(income[1]), note: income[2] || null };
     if (/^לקוחות$|^רשימה$/.test(t)) return { cmd: 'list' };
     if (/^מי דיבר$|^שמות$/.test(t))  return { cmd: 'names' };
     if (/^עבור למצב ליד$|^מצב ליד$/.test(t))           return { cmd: 'mode_lead' };
@@ -516,6 +594,64 @@ ${existingKnowledge}
                             console.error('שגיאה בשמירת ידע:', err.message);
                             await sock.sendMessage(jid, { text: `❌ שגיאה בשמירה: ${err.message}` });
                         }
+                        continue;
+                    }
+                    if (cmd?.cmd === 'mode_meeting') {
+                        ownerMode = 'meeting';
+                        conversations.delete(jid);
+                        await sock.sendMessage(jid, { text: '🤝 *מצב פגישה פעיל*\nאני כאן לייעץ בזמן אמת.\nתאר את המצב ואתן לך מה לאמר ישר.\nלחזרה: *חזור*' });
+                        continue;
+                    }
+                    if (cmd?.cmd === 'mode_crisis') {
+                        ownerMode = 'crisis';
+                        conversations.delete(jid);
+                        await sock.sendMessage(jid, { text: '🚨 *מצב לקוח בעייתי*\nתאר מה קורה — אתן לך תגובה מוכנה לשליחה.\nלחזרה: *חזור*' });
+                        continue;
+                    }
+                    if (cmd?.cmd === 'projects_list') {
+                        await sock.sendMessage(jid, { text: formatProjects() });
+                        continue;
+                    }
+                    if (cmd?.cmd === 'project_add') {
+                        projects.push({ name: cmd.name, client: cmd.name, status: 'פעיל', price: cmd.price, date: new Date().toISOString().slice(0, 10) });
+                        await saveProjects();
+                        await sock.sendMessage(jid, { text: `✅ פרויקט *${cmd.name}* נוסף | ₪${cmd.price.toLocaleString('he-IL')}` });
+                        continue;
+                    }
+                    if (cmd?.cmd === 'project_update') {
+                        const p = projects.find(p => p.name.includes(cmd.name));
+                        if (!p) { await sock.sendMessage(jid, { text: `❌ לא נמצא פרויקט "${cmd.name}"` }); continue; }
+                        p.status = cmd.status;
+                        await saveProjects();
+                        await sock.sendMessage(jid, { text: `✅ *${p.name}* → ${cmd.status}` });
+                        continue;
+                    }
+                    if (cmd?.cmd === 'project_close') {
+                        const p = projects.find(p => p.name.includes(cmd.name));
+                        if (!p) { await sock.sendMessage(jid, { text: `❌ לא נמצא פרויקט "${cmd.name}"` }); continue; }
+                        p.status = 'הושלם';
+                        await saveProjects();
+                        await sock.sendMessage(jid, { text: `✅ פרויקט *${p.name}* הושלם! 🎉` });
+                        continue;
+                    }
+                    if (cmd?.cmd === 'project_delete') {
+                        const idx = projects.findIndex(p => p.name.includes(cmd.name));
+                        if (idx === -1) { await sock.sendMessage(jid, { text: `❌ לא נמצא פרויקט "${cmd.name}"` }); continue; }
+                        const name = projects[idx].name;
+                        projects.splice(idx, 1);
+                        await saveProjects();
+                        await sock.sendMessage(jid, { text: `🗑️ פרויקט *${name}* נמחק.` });
+                        continue;
+                    }
+                    if (cmd?.cmd === 'income_add') {
+                        incomeLog.push({ amount: cmd.amount, note: cmd.note, date: new Date().toISOString().slice(0, 10) });
+                        await saveIncome();
+                        const monthTotal = incomeLog.filter(e => e.date.slice(0, 7) === new Date().toISOString().slice(0, 7)).reduce((s, e) => s + e.amount, 0);
+                        await sock.sendMessage(jid, { text: `💰 נרשמו ₪${cmd.amount.toLocaleString('he-IL')}${cmd.note ? ` — ${cmd.note}` : ''}\n📊 סה"כ החודש: ₪${monthTotal.toLocaleString('he-IL')}` });
+                        continue;
+                    }
+                    if (cmd?.cmd === 'income_report') {
+                        await sock.sendMessage(jid, { text: formatIncomeReport() });
                         continue;
                     }
                     if (cmd?.cmd === 'report') {
