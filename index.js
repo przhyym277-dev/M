@@ -330,6 +330,7 @@ function normalizePhone(phone) {
 }
 
 function jidToPhone(jid) {
+    if (jid.endsWith('@lid')) return null; // no real phone for lid JIDs
     const num = jid.split('@')[0];
     if (num.startsWith('972')) return '0' + num.slice(3);
     return num;
@@ -394,8 +395,17 @@ async function startBot() {
                 const userText = getText(msg);
                 if (!userText) continue;
 
+                const pushName = msg.pushName || null;
                 const isOwner = isOwnerPhone(jid);
-                console.log(`📩 [${isOwner ? 'יאיר' : jid}]: ${userText}`);
+
+                // Save pushName to CRM for @lid contacts that have no real phone
+                if (!isOwner && pushName && !crm.getCustomer(jid)?.name) {
+                    crm.getOrCreate(jid);
+                    crm.setName(jid, pushName);
+                }
+
+                const displayId = jidToPhone(jid) || crm.getCustomer(jid)?.name || pushName || jid.split('@')[0];
+                console.log(`📩 [${isOwner ? 'יאיר' : displayId}]: ${userText}`);
 
                 if (isOwner) {
                     const cmd = parseOwnerCommand(userText);
@@ -588,16 +598,20 @@ ${existingKnowledge}
 
                     // Notify owner on first message from new customer
                     const customer = crm.getCustomer(jid);
+                    const phone = jidToPhone(jid);
+                    const displayName = name || customer?.name || pushName || displayId;
+                    const phoneLine = phone ? `\nמספר: ${phone}` : `\nשם: ${displayName}`;
+
                     if (customer && customer.log.length === 1) {
-                        await notifyOwner(`👋 *לקוח חדש פנה!*\nמספר: ${jidToPhone(jid)}\nהודעה: "${userText}"`);
+                        await notifyOwner(`👋 *לקוח חדש פנה!*${phoneLine}\nהודעה: "${userText}"`);
                     }
 
                     // Hot lead notifications
                     if (status && status !== prevStatus) {
                         if (status === 'meeting_scheduled') {
-                            await notifyOwner(`🔥 *ליד חם!* ${name || jidToPhone(jid)} רוצה לקבוע פגישה!\nמספר: ${jidToPhone(jid)}\nהודעה: "${userText}"`);
+                            await notifyOwner(`🔥 *ליד חם!* ${displayName} רוצה לקבוע פגישה!${phoneLine}\nהודעה: "${userText}"`);
                         } else if (status === 'interested') {
-                            await notifyOwner(`⚡ *${name || jidToPhone(jid)} מתעניין!*\nמספר: ${jidToPhone(jid)}`);
+                            await notifyOwner(`⚡ *${displayName} מתעניין!*${phoneLine}`);
                         }
                     }
 
@@ -607,8 +621,8 @@ ${existingKnowledge}
                         const pkgDetails = PACKAGES[pkgKey]?.details || quoteRequest;
                         pendingQuotes.set(jid, { name: name || null, packageName: pkgKey, packageDetails: pkgDetails });
                         await notifyOwner(
-                            `💼 *${name || jidToPhone(jid)} מבקש הצעת מחיר*\n` +
-                            `מספר: ${jidToPhone(jid)}\n` +
+                            `💼 *${displayName} מבקש הצעת מחיר*\n` +
+                            (phone ? `מספר: ${phone}\n` : `שם: ${displayName}\n`) +
                             `חבילה: ${pkgKey}\n` +
                             (email ? `מייל: ${email}\n` : '') +
                             `\nכמה תרצה לגבות? שלח: *מחיר [סכום]*\nלדוגמה: מחיר 1500`
