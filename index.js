@@ -416,20 +416,29 @@ async function startBot() {
                         await sock.sendMessage(jid, { text: '⏳ שומר את הידע...' });
                         try {
                             const history = conversations.get('__learning__') || [];
+                            const existingKnowledge = process.env.BUSINESS_KNOWLEDGE || '';
                             const summaryCompletion = await getGroqClient().chat.completions.create({
                                 model: 'llama-3.3-70b-versatile',
                                 messages: [
-                                    { role: 'system', content: 'סכם את כל המידע שנאסף על העסק בצורה ברורה ומובנית. כתוב בעברית. כלול: שירותים, מחירים, תנאים, לוחות זמנים, וכל מידע רלוונטי אחר.' },
+                                    { role: 'system', content: `אתה מעדכן את בסיס הידע של העסק.
+הידע הקיים:
+${existingKnowledge}
+
+השיחה הוסיפה מידע חדש. המשימה שלך: מזג את הידע הקיים עם המידע החדש לכתיבה אחת מסודרת.
+אל תמחק מידע קיים — רק עדכן או הוסף.
+כתוב בעברית, בצורה ברורה ומובנית.` },
                                     ...history,
-                                    { role: 'user', content: 'סכם את כל מה שלמדת על העסק.' }
+                                    { role: 'user', content: 'כתוב את בסיס הידע המעודכן המלא על העסק.' }
                                 ],
-                                max_tokens: 1000,
+                                max_tokens: 1200,
                             });
-                            const summary = summaryCompletion.choices[0]?.message?.content || '';
-                            await saveKnowledgeToRender(summary);
+                            const merged = summaryCompletion.choices[0]?.message?.content || '';
+                            if (!merged) throw new Error('הסיכום ריק');
+                            console.log('💾 שומר ידע:', merged.substring(0, 100) + '...');
+                            await saveKnowledgeToRender(merged);
                             ownerMode = 'assistant';
                             conversations.delete('__learning__');
-                            await sock.sendMessage(jid, { text: `✅ *הידע נשמר!*\n\nאני יודע עכשיו:\n${summary}` });
+                            await sock.sendMessage(jid, { text: `✅ *הידע עודכן!*\n\n${merged}` });
                         } catch (err) {
                             console.error('שגיאה בשמירת ידע:', err.message);
                             await sock.sendMessage(jid, { text: `❌ שגיאה בשמירה: ${err.message}` });
