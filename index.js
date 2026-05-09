@@ -47,8 +47,9 @@ function renderApiRequest(method, path, body) {
 }
 
 async function saveKnowledgeToRender(knowledge) {
-    const existing = (await renderApiRequest('GET', `/v1/services/${RENDER_SERVICE_ID}/env-vars`))
-        .map(e => ({ key: e.envVar.key, value: e.envVar.value }));
+    const data = await renderApiRequest('GET', `/v1/services/${RENDER_SERVICE_ID}/env-vars`);
+    const arr = Array.isArray(data) ? data : [];
+    const existing = arr.map(e => ({ key: e.envVar.key, value: e.envVar.value }));
     const merged = existing.filter(e => e.key !== 'BUSINESS_KNOWLEDGE');
     merged.push({ key: 'BUSINESS_KNOWLEDGE', value: knowledge });
     await renderApiRequest('PUT', `/v1/services/${RENDER_SERVICE_ID}/env-vars`, merged);
