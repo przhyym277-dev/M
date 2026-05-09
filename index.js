@@ -8,18 +8,52 @@ const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLat
 const { Boom } = require('@hapi/boom');
 const pino = require('pino');
 
+const https = require('https');
 const GROQ_KEYS = [process.env.GROQ_API_KEY, process.env.GROQ_API_KEY_2].filter(Boolean);
 let groqKeyIndex = 0;
 function getGroqClient() { return new Groq({ apiKey: GROQ_KEYS[groqKeyIndex] }); }
 const OWNER_NUMBER = process.env.OWNER_PHONE;
 const OWNER_LID = process.env.OWNER_LID;
 const OWNER_JID = OWNER_NUMBER + '@s.whatsapp.net';
+const RENDER_SERVICE_ID = 'srv-d7usaljtqb8s73csmle0';
 
-// 'assistant' | 'lead' — owner can switch modes
+// 'assistant' | 'lead' | 'learning' — owner can switch modes
 let ownerMode = 'assistant';
 
 // Pending price quote approvals: Map<customerJid, { name, packageName, packageDetails }>
 const pendingQuotes = new Map();
+
+function renderApiRequest(method, path, body) {
+    return new Promise((resolve, reject) => {
+        const data = body ? JSON.stringify(body) : null;
+        const req = https.request({
+            hostname: 'api.render.com',
+            path,
+            method,
+            headers: {
+                'Authorization': `Bearer ${process.env.RENDER_API_KEY}`,
+                'Content-Type': 'application/json',
+                ...(data ? { 'Content-Length': Buffer.byteLength(data) } : {})
+            }
+        }, res => {
+            let d = '';
+            res.on('data', c => d += c);
+            res.on('end', () => resolve(JSON.parse(d)));
+        });
+        req.on('error', reject);
+        if (data) req.write(data);
+        req.end();
+    });
+}
+
+async function saveKnowledgeToRender(knowledge) {
+    const existing = (await renderApiRequest('GET', `/v1/services/${RENDER_SERVICE_ID}/env-vars`))
+        .map(e => ({ key: e.envVar.key, value: e.envVar.value }));
+    const merged = existing.filter(e => e.key !== 'BUSINESS_KNOWLEDGE');
+    merged.push({ key: 'BUSINESS_KNOWLEDGE', value: knowledge });
+    await renderApiRequest('PUT', `/v1/services/${RENDER_SERVICE_ID}/env-vars`, merged);
+    process.env.BUSINESS_KNOWLEDGE = knowledge;
+}
 
 function isOwnerPhone(jid) {
     return jid.includes(OWNER_NUMBER) || (OWNER_LID && jid.includes(OWNER_LID));
@@ -180,6 +214,30 @@ const ASSISTANT_PROMPT = `אתה עוזר אישי חכם של יאיר.
 
 אין נושא מחוץ לתחום — ענה על הכל.`;
 
+const LEARNING_PROMPT = `אתה לומד על העסק של יאיר כדי לעזור לו טוב יותר בעתיד.
+שאל שאלה ממוקדת אחת בכל פעם — קצרה וברורה.
+למד לפי הסדר הזה:
+1. אילו שירותים/מוצרים העסק מציע
+2. מחיר כל שירות
+3. מה כולל כל שירות
+4. לוח זמנים לביצוע
+5. תנאי תשלום
+6. לקוחות טיפוסיים
+7. יתרונות על המתחרים
+8. תהליך עבודה עם לקוח חדש
+9. כל מידע נוסף שיאיר רוצה לשתף
+
+כשיאיר עונה — אשר בקצרה שהבנת ועבור לשאלה הבאה.
+אל תשאל יותר משאלה אחת בכל פעם.`;
+
+function buildSystemPrompt(mode) {
+    const knowledge = process.env.BUSINESS_KNOWLEDGE;
+    const knowledgeBlock = knowledge ? `\n\n---\nידע על העסק (מעודכן על ידי יאיר):\n${knowledge}` : '';
+    if (mode === 'learning') return LEARNING_PROMPT;
+    if (mode === 'assistant') return ASSISTANT_PROMPT + knowledgeBlock;
+    return SALES_PROMPT + knowledgeBlock;
+}
+
 const conversations = new Map();
 
 function parseAIReply(raw) {
@@ -203,7 +261,7 @@ function parseAIReply(raw) {
 }
 
 async function getAIResponse(jid, userMessage, mode) {
-    const systemPrompt = mode === 'assistant' ? ASSISTANT_PROMPT : SALES_PROMPT;
+    const systemPrompt = buildSystemPrompt(mode);
     if (!conversations.has(jid)) conversations.set(jid, []);
     const history = conversations.get(jid);
     history.push({ role: 'user', content: userMessage });
@@ -238,6 +296,8 @@ async function getAIResponse(jid, userMessage, mode) {
 function parseOwnerCommand(text) {
     const t = text.trim();
     if (/^נקה הכל$|^מחק הכל$/.test(t)) return { cmd: 'clear_all' };
+    if (/^מצב למידה$|^למד$/.test(t))        return { cmd: 'mode_learning' };
+    if (/^סיים למידה$|^שמור ידע$|^סיים$/.test(t)) return { cmd: 'save_learning' };
     if (/^לקוחות$|^רשימה$/.test(t)) return { cmd: 'list' };
     if (/^מי דיבר$|^שמות$/.test(t))  return { cmd: 'names' };
     if (/^עבור למצב ליד$|^מצב ליד$/.test(t))           return { cmd: 'mode_lead' };
@@ -337,6 +397,38 @@ async function startBot() {
                 if (isOwner) {
                     const cmd = parseOwnerCommand(userText);
 
+                    if (cmd?.cmd === 'mode_learning') {
+                        ownerMode = 'learning';
+                        conversations.delete('__learning__');
+                        await sock.sendMessage(jid, { text: '📚 *מצב למידה פעיל*\nאשאל אותך שאלות על העסק אחת-אחת.\nכשתסיים — כתוב: *סיים למידה*' });
+                        const { reply } = await getAIResponse('__learning__', 'שלום, אני מוכן ללמוד על העסק שלך. נתחיל?', 'learning');
+                        if (reply) await sock.sendMessage(jid, { text: reply });
+                        continue;
+                    }
+                    if (cmd?.cmd === 'save_learning') {
+                        await sock.sendMessage(jid, { text: '⏳ שומר את הידע...' });
+                        try {
+                            const history = conversations.get('__learning__') || [];
+                            const summaryCompletion = await getGroqClient().chat.completions.create({
+                                model: 'llama-3.3-70b-versatile',
+                                messages: [
+                                    { role: 'system', content: 'סכם את כל המידע שנאסף על העסק בצורה ברורה ומובנית. כתוב בעברית. כלול: שירותים, מחירים, תנאים, לוחות זמנים, וכל מידע רלוונטי אחר.' },
+                                    ...history,
+                                    { role: 'user', content: 'סכם את כל מה שלמדת על העסק.' }
+                                ],
+                                max_tokens: 1000,
+                            });
+                            const summary = summaryCompletion.choices[0]?.message?.content || '';
+                            await saveKnowledgeToRender(summary);
+                            ownerMode = 'assistant';
+                            conversations.delete('__learning__');
+                            await sock.sendMessage(jid, { text: `✅ *הידע נשמר!*\n\nאני יודע עכשיו:\n${summary}` });
+                        } catch (err) {
+                            console.error('שגיאה בשמירת ידע:', err.message);
+                            await sock.sendMessage(jid, { text: `❌ שגיאה בשמירה: ${err.message}` });
+                        }
+                        continue;
+                    }
                     if (cmd?.cmd === 'clear_all') {
                         conversations.clear();
                         const fs = require('fs');
@@ -446,6 +538,7 @@ async function startBot() {
                 }
 
                 const aiMode = isOwner ? ownerMode : 'sales';
+                const aiJid  = (isOwner && ownerMode === 'learning') ? '__learning__' : jid;
 
                 // Typing indicator (ignore errors — @lid JIDs may not support presence)
                 const presence = (type) => Promise.race([
@@ -453,7 +546,7 @@ async function startBot() {
                     new Promise(r => setTimeout(r, 1500))
                 ]);
                 await presence('composing');
-                const { reply, understood, status, name, email, quoteRequest } = await getAIResponse(jid, userText, aiMode);
+                const { reply, understood, status, name, email, quoteRequest } = await getAIResponse(aiJid, userText, aiMode);
                 await presence('paused');
 
                 if (!understood || !reply) {
