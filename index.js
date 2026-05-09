@@ -39,6 +39,10 @@ let calendarIdCounter = (calendar.length ? Math.max(...calendar.map(e => e.id)) 
 // Pending meeting approval from owner: { customerJid, name, slot }
 let pendingMeetingApproval = null;
 
+// Do Not Disturb mode
+let doNotDisturb = false;
+let missedMessages = []; // { name, phone, text } — collected while DND is on
+
 async function parseCalendarEvent(text) {
     const now = new Date().toLocaleString('he-IL', { timeZone: 'Asia/Jerusalem' });
     try {
@@ -345,6 +349,7 @@ QUOTE_REQUEST:[שם החבילה המתאימה]
 
 כשלקוח רוצה לקבוע פגישה/שיחה עם יאיר — אמור: "מעולה! אבדוק זמינות ואחזור אליך תוך דקות" והוסף חובה:
 MEETING_REQUEST:[שם הלקוח]
+שים לב: יאיר לא עובד ביום שישי ושבת — אל תציע זמנים אלו.
 
 אל תאמר "יאיר יחזור אליך" — נהל את השיחה עצמאית עד לסגירה.
 
@@ -494,6 +499,8 @@ function parseOwnerCommand(text) {
     if (/^מצב למידה$|^למד$/.test(t))        return { cmd: 'mode_learning' };
     if (/^סיים למידה$|^שמור ידע$|^סיים$/.test(t)) return { cmd: 'save_learning' };
     if (/^עזרה$|^פקודות$|^help$/.test(t)) return { cmd: 'help' };
+    if (/^לילה טוב$|^לילה טוב 🌙$/.test(t)) return { cmd: 'dnd_on' };
+    if (/^בוקר טוב$|^בוקר טוב ☀️$/.test(t)) return { cmd: 'dnd_off' };
     if (/^דוח$|^סטטיסטיקות$|^סטט$/.test(t)) return { cmd: 'report' };
     if (/^תזכורות$|^תזכורות פעילות$/.test(t)) return { cmd: 'list_reminders' };
     if (/תזכיר לי|תזכורת ב/.test(t)) return { cmd: 'reminder', text: t };
@@ -678,6 +685,25 @@ ${existingKnowledge}
                         }
                         continue;
                     }
+                    if (cmd?.cmd === 'dnd_on') {
+                        doNotDisturb = true;
+                        missedMessages = [];
+                        await sock.sendMessage(jid, { text: '🌙 *לילה טוב!*\nהבוט במצב שקט — לא יענה ללקוחות.\nאודיע לך בבוקר מי כתב.' });
+                        continue;
+                    }
+                    if (cmd?.cmd === 'dnd_off') {
+                        doNotDisturb = false;
+                        if (missedMessages.length === 0) {
+                            await sock.sendMessage(jid, { text: '☀️ *בוקר טוב!* לא הגיעו הודעות בלילה.' });
+                        } else {
+                            const summary = missedMessages.map((m, i) =>
+                                `${i + 1}. *${m.name}* — "${m.text.substring(0, 60)}"`
+                            ).join('\n');
+                            await sock.sendMessage(jid, { text: `☀️ *בוקר טוב!* בזמן שישנת:\n\n${summary}\n\nהבוט חוזר לענות.` });
+                        }
+                        missedMessages = [];
+                        continue;
+                    }
                     if (cmd?.cmd === 'help') {
                         await sock.sendMessage(jid, { text: `🤖 *מה אני יכול לעשות:*
 
@@ -727,6 +753,10 @@ ${existingKnowledge}
 • \`מחק אירוע [מספר]\`
 • \`אשר פגישה\` — אישור פגישה עם לקוח
 • \`דחה פגישה [זמן חלופי]\` — דחיה + הצעת זמן
+
+🌙 *מצב שקט*
+• \`לילה טוב\` — הבוט מפסיק לענות ללקוחות
+• \`בוקר טוב\` — חוזר לפעילות + סיכום מי כתב
 
 🗑️ *ניהול*
 • \`נקה הכל\` — מחיקת CRM וזיכרון` });
@@ -987,6 +1017,15 @@ ${existingKnowledge}
                         await sock.sendMessage(jid, { text: `✅ עסקה נסגרה! ${c?.name || jidToPhone(ph)} 🎉` });
                         continue;
                     }
+                }
+
+                // DND mode — don't respond to customers
+                if (doNotDisturb && !isOwner) {
+                    crm.getOrCreate(jid);
+                    crm.addLog(jid, 'in', userText);
+                    missedMessages.push({ name: displayName, text: userText });
+                    console.log(`🌙 DND — הודעה מ-${displayName} נשמרה`);
+                    continue;
                 }
 
                 const aiMode = isOwner ? ownerMode : 'sales';
