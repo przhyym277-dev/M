@@ -31,8 +31,31 @@ let reminderIdCounter = 1;
 function loadJSON(key, fallback = []) {
     try { return JSON.parse(process.env[key] || 'null') || fallback; } catch { return fallback; }
 }
-let projects = loadJSON('PROJECTS_DATA');
+let projects  = loadJSON('PROJECTS_DATA');
 let incomeLog = loadJSON('INCOME_DATA');
+let calendar  = loadJSON('CALENDAR_DATA');
+let calendarIdCounter = (calendar.length ? Math.max(...calendar.map(e => e.id)) + 1 : 1);
+
+// Pending meeting approval from owner: { customerJid, name, slot }
+let pendingMeetingApproval = null;
+
+async function parseCalendarEvent(text) {
+    const now = new Date().toLocaleString('he-IL', { timeZone: 'Asia/Jerusalem' });
+    try {
+        const completion = await getGroqClient().chat.completions.create({
+            model: 'llama-3.3-70b-versatile',
+            messages: [{
+                role: 'system',
+                content: `Parse a Hebrew calendar event and return ONLY JSON: {"title":"...","date":"YYYY-MM-DD","time":"HH:MM","duration":60}.
+Current date in Israel: ${now}. Year is 2026.
+Example: "פגישה עם דוד ב-12/05 בשעה 10:00" → {"title":"פגישה עם דוד","date":"2026-05-12","time":"10:00","duration":60}
+Return ONLY valid JSON.`
+            }, { role: 'user', content: text }],
+            max_tokens: 100, temperature: 0,
+        });
+        return JSON.parse(completion.choices[0]?.message?.content || 'null');
+    } catch { return null; }
+}
 
 async function parseReminderIntent(text) {
     const now = new Date().toLocaleString('he-IL', { timeZone: 'Asia/Jerusalem' });
@@ -87,6 +110,49 @@ function generateReport() {
         `אחוז סגירה: *${convRate}%*`;
 }
 
+const DAY_NAMES = ['ראשון', 'שני', 'שלישי', 'רביעי', 'חמישי', 'שישי', 'שבת'];
+
+function formatCalendar() {
+    if (calendar.length === 0) return '📅 היומן ריק.';
+    const now = new Date();
+    const upcoming = calendar
+        .filter(e => new Date(e.date + 'T' + (e.time || '00:00')) >= now)
+        .sort((a, b) => (a.date + a.time).localeCompare(b.date + b.time))
+        .slice(0, 10);
+    if (upcoming.length === 0) return '📅 אין אירועים קרובים.';
+    return '📅 *יומן קרוב:*\n\n' + upcoming.map(e => {
+        const d = new Date(e.date);
+        const day = DAY_NAMES[d.getDay()];
+        const dateStr = `${d.getDate()}/${d.getMonth() + 1}`;
+        return `• *${day} ${dateStr}* ${e.time ? `ב-${e.time}` : ''} — ${e.title} (${e.id})`;
+    }).join('\n');
+}
+
+function findFreeSlots(count = 2) {
+    const slots = [];
+    const now = new Date();
+    for (let d = 1; d <= 10 && slots.length < count; d++) {
+        const date = new Date(now);
+        date.setDate(date.getDate() + d);
+        const dow = date.getDay();
+        if (dow === 5 || dow === 6) continue; // skip Friday & Saturday
+        const dateStr = date.toISOString().slice(0, 10);
+        const dayEvents = calendar.filter(e => e.date === dateStr);
+        for (const hour of [9, 10, 11, 14, 15, 16]) {
+            const timeStr = `${String(hour).padStart(2, '0')}:00`;
+            const busy = dayEvents.some(e => {
+                const eh = parseInt((e.time || '0').split(':')[0]);
+                return hour >= eh && hour < eh + ((e.duration || 60) / 60);
+            });
+            if (!busy) {
+                slots.push({ date: dateStr, time: timeStr, day: DAY_NAMES[dow] });
+                break;
+            }
+        }
+    }
+    return slots;
+}
+
 function renderApiRequest(method, path, body) {
     return new Promise((resolve, reject) => {
         const data = body ? JSON.stringify(body) : null;
@@ -122,8 +188,9 @@ async function saveEnvVar(key, value) {
 
 async function saveKnowledgeToRender(knowledge) { await saveEnvVar('BUSINESS_KNOWLEDGE', knowledge); }
 
-async function saveProjects() { await saveEnvVar('PROJECTS_DATA', JSON.stringify(projects)); }
-async function saveIncome()   { await saveEnvVar('INCOME_DATA',   JSON.stringify(incomeLog)); }
+async function saveProjects()  { await saveEnvVar('PROJECTS_DATA',  JSON.stringify(projects)); }
+async function saveIncome()    { await saveEnvVar('INCOME_DATA',    JSON.stringify(incomeLog)); }
+async function saveCalendar()  { await saveEnvVar('CALENDAR_DATA',  JSON.stringify(calendar)); }
 
 function formatProjects() {
     if (projects.length === 0) return '📋 אין פרויקטים פעילים.';
@@ -276,6 +343,9 @@ const SALES_PROMPT = `אתה "מאקס" — נציג מכירות של מאסט�
 כשלקוח מוכן להצעת מחיר — אמור: "מצוין! אכין לך הצעה מפורטת ואשלח תוך דקות" והוסף חובה:
 QUOTE_REQUEST:[שם החבילה המתאימה]
 
+כשלקוח רוצה לקבוע פגישה/שיחה עם יאיר — אמור: "מעולה! אבדוק זמינות ואחזור אליך תוך דקות" והוסף חובה:
+MEETING_REQUEST:[שם הלקוח]
+
 אל תאמר "יאיר יחזור אליך" — נהל את השיחה עצמאית עד לסגירה.
 
 בסוף כל תשובה הוסף:
@@ -367,11 +437,12 @@ function parseAIReply(raw) {
     const statusMatch = raw.match(/STATUS:\s*\[?([\w_]+)\]?/);
     const nameMatch   = raw.match(/NAME:\s*\[?(.+?)\]?\s*$/m);
     const emailMatch  = raw.match(/EMAIL:\s*\[?(.+?)\]?\s*$/m);
-    const quoteMatch  = raw.match(/QUOTE_REQUEST:\s*\[?(.+?)\]?\s*$/m);
+    const quoteMatch   = raw.match(/QUOTE_REQUEST:\s*\[?(.+?)\]?\s*$/m);
+    const meetingMatch = raw.match(/MEETING_REQUEST:\s*\[?(.+?)\]?\s*$/m);
     // Remove entire lines that contain any of the meta tags
     const clean = raw
         .split('\n')
-        .filter(line => !/STATUS:|NAME:|EMAIL:|QUOTE_REQUEST:/.test(line))
+        .filter(line => !/STATUS:|NAME:|EMAIL:|QUOTE_REQUEST:|MEETING_REQUEST:/.test(line))
         .join('\n')
         .trim();
     return {
@@ -379,7 +450,8 @@ function parseAIReply(raw) {
         status:       statusMatch ? statusMatch[1] : null,
         name:         nameMatch  && nameMatch[1].trim()  !== 'UNKNOWN' ? nameMatch[1].trim()  : null,
         email:        emailMatch && emailMatch[1].trim() !== 'UNKNOWN' ? emailMatch[1].trim() : null,
-        quoteRequest: quoteMatch ? quoteMatch[1].trim() : null,
+        quoteRequest:   quoteMatch   ? quoteMatch[1].trim()   : null,
+        meetingRequest: meetingMatch ? meetingMatch[1].trim() : null,
     };
 }
 
@@ -443,6 +515,15 @@ function parseOwnerCommand(text) {
     if (/^הכנסות$/.test(t)) return { cmd: 'income_report' };
     const income = t.match(/^סגרתי\s+(\d+)(?:\s+(.+))?$/);
     if (income) return { cmd: 'income_add', amount: Number(income[1]), note: income[2] || null };
+    // Calendar
+    if (/^יומן$/.test(t)) return { cmd: 'calendar_show' };
+    const calDel = t.match(/^מחק אירוע\s+(\d+)$/);
+    if (calDel) return { cmd: 'calendar_delete', id: Number(calDel[1]) };
+    if (/^אשר פגישה$|^אשר$/.test(t) && pendingMeetingApproval) return { cmd: 'meeting_approve' };
+    const meetingDecline = t.match(/^דחה פגישה(?:\s+(.+))?$/);
+    if (meetingDecline && pendingMeetingApproval) return { cmd: 'meeting_decline', alt: meetingDecline[1] || null };
+    // "הוסף אירוע [title] בתאריך [date] בשעה [time]" — parsed by AI
+    if (/^הוסף אירוע|^אירוע חדש/.test(t)) return { cmd: 'calendar_add_raw', text: t };
     if (/^לקוחות$|^רשימה$/.test(t)) return { cmd: 'list' };
     if (/^מי דיבר$|^שמות$/.test(t))  return { cmd: 'names' };
     if (/^עבור למצב ליד$|^מצב ליד$/.test(t))           return { cmd: 'mode_lead' };
@@ -640,6 +721,13 @@ ${existingKnowledge}
 📊 *דוחות*
 • \`דוח\` — סטטיסטיקות לידים וסגירות
 
+📅 *יומן*
+• \`יומן\` — הצגת אירועים קרובים
+• \`הוסף אירוע פגישה עם דוד ב-12/05 בשעה 10:00\`
+• \`מחק אירוע [מספר]\`
+• \`אשר פגישה\` — אישור פגישה עם לקוח
+• \`דחה פגישה [זמן חלופי]\` — דחיה + הצעת זמן
+
 🗑️ *ניהול*
 • \`נקה הכל\` — מחיקת CRM וזיכרון` });
                         continue;
@@ -700,6 +788,55 @@ ${existingKnowledge}
                     }
                     if (cmd?.cmd === 'income_report') {
                         await sock.sendMessage(jid, { text: formatIncomeReport() });
+                        continue;
+                    }
+                    if (cmd?.cmd === 'calendar_show') {
+                        await sock.sendMessage(jid, { text: formatCalendar() });
+                        continue;
+                    }
+                    if (cmd?.cmd === 'calendar_delete') {
+                        const idx = calendar.findIndex(e => e.id === cmd.id);
+                        if (idx === -1) { await sock.sendMessage(jid, { text: `❌ אירוע ${cmd.id} לא נמצא.` }); continue; }
+                        const title = calendar[idx].title;
+                        calendar.splice(idx, 1);
+                        await saveCalendar();
+                        await sock.sendMessage(jid, { text: `🗑️ האירוע "${title}" נמחק.` });
+                        continue;
+                    }
+                    if (cmd?.cmd === 'calendar_add_raw') {
+                        const parsed = await parseCalendarEvent(cmd.text);
+                        if (!parsed) { await sock.sendMessage(jid, { text: '❌ לא הבנתי את האירוע. נסה: "הוסף אירוע פגישה עם דוד בתאריך 12/05 בשעה 10:00"' }); continue; }
+                        parsed.id = calendarIdCounter++;
+                        calendar.push(parsed);
+                        await saveCalendar();
+                        const d = new Date(parsed.date);
+                        await sock.sendMessage(jid, { text: `✅ נוסף: *${parsed.title}*\n📅 ${DAY_NAMES[d.getDay()]} ${d.getDate()}/${d.getMonth()+1} ב-${parsed.time || ''}` });
+                        continue;
+                    }
+                    if (cmd?.cmd === 'meeting_approve') {
+                        const m = pendingMeetingApproval;
+                        pendingMeetingApproval = null;
+                        const slotText = `${DAY_NAMES[new Date(m.slot.date).getDay()]} ${new Date(m.slot.date).getDate()}/${new Date(m.slot.date).getMonth()+1} בשעה ${m.slot.time}`;
+                        // Add to calendar
+                        calendar.push({ id: calendarIdCounter++, title: `פגישה עם ${m.name}`, date: m.slot.date, time: m.slot.time, duration: 60 });
+                        await saveCalendar();
+                        // Notify customer
+                        await sock.sendMessage(m.customerJid, { text: `✅ מעולה! קבענו פגישה ל${slotText}.\nיאיר ייצור איתך קשר לקראת הפגישה 😊` });
+                        crm.addLog(m.customerJid, 'out', `[פגישה נקבעה: ${slotText}]`);
+                        crm.setStatus(m.customerJid, 'meeting_scheduled');
+                        await sock.sendMessage(jid, { text: `✅ פגישה אושרה ונקבעה ביומן!\n${slotText}` });
+                        continue;
+                    }
+                    if (cmd?.cmd === 'meeting_decline') {
+                        const m = pendingMeetingApproval;
+                        if (cmd.alt) {
+                            pendingMeetingApproval = null;
+                            await sock.sendMessage(m.customerJid, { text: `שלום! הבדקתי את הזמינות — ${cmd.alt} מתאים לך?` });
+                            crm.addLog(m.customerJid, 'out', `[הצעת זמן חלופי: ${cmd.alt}]`);
+                            await sock.sendMessage(jid, { text: `✅ נשלחה הצעת זמן חלופי: "${cmd.alt}"` });
+                        } else {
+                            await sock.sendMessage(jid, { text: '⏰ מתי כן פנוי? שלח: "דחה פגישה [זמן חלופי]"\nלדוגמה: "דחה פגישה יום ראשון ב-11:00"' });
+                        }
                         continue;
                     }
                     if (cmd?.cmd === 'report') {
@@ -809,6 +946,9 @@ ${existingKnowledge}
                             });
                             crm.addLog(targetJid, 'out', `[הצעת מחיר נשלחה: ${quoteData.packageName} ₪${cmd.amount}]`);
                             crm.setStatus(targetJid, 'meeting_scheduled');
+                            // Add to AI conversation so bot remembers
+                            if (!conversations.has(targetJid)) conversations.set(targetJid, []);
+                            conversations.get(targetJid).push({ role: 'assistant', content: `שלחתי לך הצעת מחיר רשמית לחבילת ${quoteData.packageName} במחיר ₪${cmd.amount}. ממתין לתגובתך.` });
                             await sock.sendMessage(jid, { text: `✅ הצעת מחיר נשלחה ל-${quoteData.name || jidToPhone(targetJid)} — ${quoteData.packageName} ₪${cmd.amount}` });
                         } catch (err) {
                             console.error('שגיאה ביצירת PDF:', err.message);
@@ -858,7 +998,7 @@ ${existingKnowledge}
                     new Promise(r => setTimeout(r, 1500))
                 ]);
                 await presence('composing');
-                const { reply, understood, status, name, email, quoteRequest } = await getAIResponse(aiJid, userText, aiMode);
+                const { reply, understood, status, name, email, quoteRequest, meetingRequest } = await getAIResponse(aiJid, userText, aiMode);
                 await presence('paused');
 
                 if (!understood || !reply) {
@@ -899,6 +1039,20 @@ ${existingKnowledge}
                         } else if (status === 'interested') {
                             await notifyOwner(`⚡ *${displayName} מתעניין!*${phoneLine}`);
                         }
+                    }
+
+                    // Meeting request — check calendar and ask owner
+                    if (meetingRequest) {
+                        const slots = findFreeSlots(2);
+                        if (slots.length === 0) {
+                            await notifyOwner(`📅 *${displayName} רוצה לקבוע פגישה*\n${phoneLine}\nאין זמן פנוי ביומן — תוסיף זמינות ב: *הוסף אירוע*`);
+                        } else {
+                            const slot = slots[0];
+                            const slotText = `${slot.day} ${new Date(slot.date).getDate()}/${new Date(slot.date).getMonth()+1} ב-${slot.time}`;
+                            pendingMeetingApproval = { customerJid: jid, name: displayName, slot };
+                            await notifyOwner(`📅 *${displayName} רוצה לקבוע פגישה*\n${phoneLine}\n\nהצעת זמן: *${slotText}*\n\nלאשר: *אשר פגישה*\nלדחות: *דחה פגישה [זמן אחר]*`);
+                        }
+                        crm.addLog(jid, 'out', '[בקשת פגישה נשלחה לאישור הבעלים]');
                     }
 
                     // Quote request — ask owner for approval
