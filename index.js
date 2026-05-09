@@ -23,6 +23,63 @@ let ownerMode = 'assistant';
 // Pending price quote approvals: Map<customerJid, { name, packageName, packageDetails }>
 const pendingQuotes = new Map();
 
+// Active reminders
+const activeReminders = [];
+let reminderIdCounter = 1;
+
+async function parseReminderIntent(text) {
+    const now = new Date().toLocaleString('he-IL', { timeZone: 'Asia/Jerusalem' });
+    try {
+        const completion = await getGroqClient().chat.completions.create({
+            model: 'llama-3.3-70b-versatile',
+            messages: [{
+                role: 'system',
+                content: `Parse a Hebrew reminder and return ONLY JSON: {"delayMinutes": <number>, "message": "<reminder text>"}.
+Current time in Israel: ${now}.
+Examples:
+"תזכיר לי בעוד שעה לקרוא לדוד" → {"delayMinutes":60,"message":"לקרוא לדוד"}
+"תזכורת ב-15:00 לשלוח חשבונית" → calculate minutes from now to 15:00 today, message: "לשלוח חשבונית"
+"תזכיר לי בעוד 30 דקות לפגישה" → {"delayMinutes":30,"message":"פגישה"}
+Return ONLY valid JSON, nothing else.`
+            }, { role: 'user', content: text }],
+            max_tokens: 80, temperature: 0,
+        });
+        return JSON.parse(completion.choices[0]?.message?.content || 'null');
+    } catch { return null; }
+}
+
+async function scheduleReminder(text, delayMs) {
+    const id = reminderIdCounter++;
+    const fireAt = new Date(Date.now() + delayMs);
+    const timeoutId = setTimeout(async () => {
+        await notifyOwner(`⏰ *תזכורת:* ${text}`);
+        const idx = activeReminders.findIndex(r => r.id === id);
+        if (idx !== -1) activeReminders.splice(idx, 1);
+    }, delayMs);
+    activeReminders.push({ id, text, timeoutId, fireAt });
+    return { id, fireAt };
+}
+
+function generateReport() {
+    const db = crm.getAll();
+    const customers = Object.values(db);
+    if (customers.length === 0) return '📊 אין לקוחות עדיין.';
+    const now = new Date();
+    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+    const thisMonth = customers.filter(c => new Date(c.firstSeen) >= monthStart).length;
+    const byStatus = { new: 0, interested: 0, meeting_scheduled: 0, closed: 0, cold: 0 };
+    customers.forEach(c => { if (byStatus[c.status] !== undefined) byStatus[c.status]++; });
+    const convRate = customers.length > 0 ? Math.round(byStatus.closed / customers.length * 100) : 0;
+    return `📊 *דוח לקוחות*\n\n` +
+        `סה"כ: ${customers.length} | החודש: ${thisMonth} חדשים\n\n` +
+        `🆕 חדש: ${byStatus.new}\n` +
+        `🔥 מתעניין: ${byStatus.interested}\n` +
+        `📅 פגישה: ${byStatus.meeting_scheduled}\n` +
+        `✅ סגור: ${byStatus.closed}\n` +
+        `❄️ קר: ${byStatus.cold}\n\n` +
+        `אחוז סגירה: *${convRate}%*`;
+}
+
 function renderApiRequest(method, path, body) {
     return new Promise((resolve, reject) => {
         const data = body ? JSON.stringify(body) : null;
@@ -208,11 +265,13 @@ const ASSISTANT_PROMPT = `אתה עוזר אישי חכם של יאיר.
 
 תחומי עזרה — הכל:
 - עסקי: הצעות מחיר, ניסוח חוזים, מיילים ללקוחות, אסטרטגיה עסקית
+- ניסוח הודעות: מייל מקצועי, הודעת וואטסאפ, תשובה ללקוח קשה, הודעת גביה — תנסח מוכן לשליחה
 - שיווק: פוסטים לסושיאל, קמפיינים, כותרות, תיאורי מוצר
 - טכנולוגיה: קוד, בעיות טכניות, בחירת כלים
 - כללי: תכנון, החלטות, שאלות כלשהן — ספורט, בישול, חדשות, כל נושא
 - אישי: לוחות זמנים, רשימות משימות, כל מה שיאיר צריך
 
+כשמבקשים לנסח הודעה — תן את הטקסט המוכן ישר, בלי הסברים מסביב.
 אין נושא מחוץ לתחום — ענה על הכל.`;
 
 const LEARNING_PROMPT = `אתה לומד על העסק של יאיר כדי לעזור לו טוב יותר.
@@ -301,6 +360,10 @@ function parseOwnerCommand(text) {
     if (/^נקה הכל$|^מחק הכל$/.test(t)) return { cmd: 'clear_all' };
     if (/^מצב למידה$|^למד$/.test(t))        return { cmd: 'mode_learning' };
     if (/^סיים למידה$|^שמור ידע$|^סיים$/.test(t)) return { cmd: 'save_learning' };
+    if (/^דוח$|^סטטיסטיקות$|^סטט$/.test(t)) return { cmd: 'report' };
+    if (/^תזכורות$|^תזכורות פעילות$/.test(t)) return { cmd: 'list_reminders' };
+    if (/תזכיר לי|תזכורת ב/.test(t)) return { cmd: 'reminder', text: t };
+    if (/^מחק תזכורת\s+(\d+)$/.test(t)) { const m = t.match(/^מחק תזכורת\s+(\d+)$/); return { cmd: 'delete_reminder', id: Number(m[1]) }; }
     if (/^לקוחות$|^רשימה$/.test(t)) return { cmd: 'list' };
     if (/^מי דיבר$|^שמות$/.test(t))  return { cmd: 'names' };
     if (/^עבור למצב ליד$|^מצב ליד$/.test(t))           return { cmd: 'mode_lead' };
@@ -452,6 +515,45 @@ ${existingKnowledge}
                         } catch (err) {
                             console.error('שגיאה בשמירת ידע:', err.message);
                             await sock.sendMessage(jid, { text: `❌ שגיאה בשמירה: ${err.message}` });
+                        }
+                        continue;
+                    }
+                    if (cmd?.cmd === 'report') {
+                        await sock.sendMessage(jid, { text: generateReport() });
+                        continue;
+                    }
+                    if (cmd?.cmd === 'list_reminders') {
+                        if (activeReminders.length === 0) {
+                            await sock.sendMessage(jid, { text: '⏰ אין תזכורות פעילות.' });
+                        } else {
+                            const lines = activeReminders.map(r => {
+                                const t = r.fireAt.toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Jerusalem' });
+                                return `${r.id}. בשעה ${t} — ${r.text}`;
+                            });
+                            await sock.sendMessage(jid, { text: `⏰ *תזכורות פעילות:*\n${lines.join('\n')}\n\nלמחיקה: *מחק תזכורת [מספר]*` });
+                        }
+                        continue;
+                    }
+                    if (cmd?.cmd === 'delete_reminder') {
+                        const idx = activeReminders.findIndex(r => r.id === cmd.id);
+                        if (idx === -1) {
+                            await sock.sendMessage(jid, { text: `❌ תזכורת ${cmd.id} לא נמצאה.` });
+                        } else {
+                            clearTimeout(activeReminders[idx].timeoutId);
+                            activeReminders.splice(idx, 1);
+                            await sock.sendMessage(jid, { text: `✅ תזכורת ${cmd.id} נמחקה.` });
+                        }
+                        continue;
+                    }
+                    if (cmd?.cmd === 'reminder') {
+                        await sock.sendMessage(jid, { text: '⏳ מגדיר תזכורת...' });
+                        const parsed = await parseReminderIntent(cmd.text);
+                        if (!parsed || !parsed.delayMinutes || parsed.delayMinutes <= 0) {
+                            await sock.sendMessage(jid, { text: '❌ לא הצלחתי להבין את הזמן. נסה: "תזכיר לי בעוד שעה לקרוא לדוד"' });
+                        } else {
+                            const { id, fireAt } = await scheduleReminder(parsed.message, parsed.delayMinutes * 60 * 1000);
+                            const timeStr = fireAt.toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Jerusalem' });
+                            await sock.sendMessage(jid, { text: `✅ תזכורת ${id} נקבעה לשעה ${timeStr}\n📝 ${parsed.message}` });
                         }
                         continue;
                     }
