@@ -215,10 +215,11 @@ const ASSISTANT_PROMPT = `אתה עוזר אישי חכם של יאיר.
 
 אין נושא מחוץ לתחום — ענה על הכל.`;
 
-const LEARNING_PROMPT = `אתה לומד על העסק של יאיר כדי לעזור לו טוב יותר בעתיד.
+const LEARNING_PROMPT = `אתה לומד על העסק של יאיר כדי לעזור לו טוב יותר.
 שאל שאלה ממוקדת אחת בכל פעם — קצרה וברורה.
-למד לפי הסדר הזה:
-1. אילו שירותים/מוצרים העסק מציע
+אם קיבלת ידע קיים על העסק — בדוק מה חסר ושאל רק על הפערים.
+נושאים ללמוד (אם עוד לא ידוע):
+1. שירותים/מוצרים שהעסק מציע
 2. מחיר כל שירות
 3. מה כולל כל שירות
 4. לוח זמנים לביצוע
@@ -229,7 +230,8 @@ const LEARNING_PROMPT = `אתה לומד על העסק של יאיר כדי לע
 9. כל מידע נוסף שיאיר רוצה לשתף
 
 כשיאיר עונה — אשר בקצרה שהבנת ועבור לשאלה הבאה.
-אל תשאל יותר משאלה אחת בכל פעם.`;
+אל תשאל יותר משאלה אחת בכל פעם.
+אל תשאל על מידע שכבר ידוע לך.`;
 
 function buildSystemPrompt(mode) {
     const knowledge = process.env.BUSINESS_KNOWLEDGE;
@@ -402,7 +404,11 @@ async function startBot() {
                         ownerMode = 'learning';
                         conversations.delete('__learning__');
                         await sock.sendMessage(jid, { text: '📚 *מצב למידה פעיל*\nאשאל אותך שאלות על העסק אחת-אחת.\nכשתסיים — כתוב: *סיים למידה*' });
-                        const { reply } = await getAIResponse('__learning__', 'שלום, אני מוכן ללמוד על העסק שלך. נתחיל?', 'learning');
+                        const existing = process.env.BUSINESS_KNOWLEDGE;
+                        const startMsg = existing
+                            ? `זה הידע שכבר יש לי על העסק:\n${existing}\n\nאני אשאל רק על מה שחסר.`
+                            : 'שלום, אני מוכן ללמוד על העסק שלך. נתחיל?';
+                        const { reply } = await getAIResponse('__learning__', startMsg, 'learning');
                         if (reply) await sock.sendMessage(jid, { text: reply });
                         continue;
                     }
