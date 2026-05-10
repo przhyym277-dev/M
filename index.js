@@ -512,14 +512,18 @@ async function getAIResponse(jid, userMessage, mode) {
         } catch (err) {
             const is429 = err.message?.includes('429') || err.status === 429;
             if (is429) {
-                // Parse retry-after from error message (e.g. "Please try again in 22m14.88s")
                 const retryMatch = err.message?.match(/try again in (\d+)m([\d.]+)s/);
                 const cooldownMs = retryMatch
                     ? (Number(retryMatch[1]) * 60 + Number(retryMatch[2])) * 1000 + 5000
                     : 25 * 60 * 1000;
-                groqKeyCooldown.set(groqKeyIndex, Date.now() + cooldownMs);
+                const refreshAt = Date.now() + cooldownMs;
+                groqKeyCooldown.set(groqKeyIndex, refreshAt);
+                const refreshTime = new Date(refreshAt).toLocaleTimeString('he-IL', {
+                    hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Jerusalem'
+                });
                 const mins = Math.ceil(cooldownMs / 60000);
-                console.log(`⚠️ Groq key ${groqKeyIndex + 1} הגיע ללימיט — מוקפא ${mins} דק'`);
+                console.log(`⚠️ Groq key ${groqKeyIndex + 1} הגיע ללימיט — מתחדש בשעה ${refreshTime}`);
+                notifyOwner(`⚠️ *Groq מפתח ${groqKeyIndex + 1} נגמר*\nמתחדש בשעה *${refreshTime}* (בעוד ${mins} דק')`).catch(() => {});
                 groqKeyIndex = (groqKeyIndex + 1) % GROQ_KEYS.length;
                 continue;
             }
@@ -1406,13 +1410,30 @@ ${existingKnowledge}
                 await presence('paused');
 
                 if (!understood || !reply) {
-                    const allDown = !understood;
-                    console.log(`❌ Groq נכשל${allDown ? ' — כל המפתחות בהקפאה' : ''}`);
+                    console.log(`❌ Groq נכשל — כל המפתחות בהקפאה`);
+                    // Find the soonest key to recover
+                    const now = Date.now();
+                    const soonestRefresh = Math.min(...[...groqKeyCooldown.values()].filter(t => t > now));
+                    const refreshTime = isFinite(soonestRefresh)
+                        ? new Date(soonestRefresh).toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Jerusalem' })
+                        : null;
                     if (!isOwner) {
-                        await sock.sendMessage(jid, { text: 'קיבלנו את הפנייה שלך! נציג יחזור אליך תוך דקות 😊' });
-                        await notifyOwner(`🔔 *לקוח ממתין לתשובה*\nשם: ${crm.getCustomer(jid)?.name || 'לא ידוע'}\nמספר: ${jidToPhone(jid) || jid}\nהודעה: "${userText}"${allDown ? '\n\n⛔ כל מפתחות Groq נגמרו — צריך מפתח מחשבון אחר' : ''}`);
+                        const customerMsg = refreshTime
+                            ? `שלום! יאיר יחזור אליך בקרוב 😊\n_(המערכת מתחדשת בשעה ${refreshTime})_`
+                            : 'שלום! יאיר יחזור אליך בקרוב 😊';
+                        await sock.sendMessage(jid, { text: customerMsg });
+                        await notifyOwner(
+                            `🔔 *לקוח ממתין לתשובה*\n` +
+                            `שם: ${crm.getCustomer(jid)?.name || 'לא ידוע'}\n` +
+                            `מספר: ${jidToPhone(jid) || jid}\n` +
+                            `הודעה: "${userText}"\n\n` +
+                            `⛔ כל מפתחות Groq נגמרו${refreshTime ? ` — מתחדש בשעה *${refreshTime}*` : ''}`
+                        );
                     } else {
-                        await sock.sendMessage(jid, { text: allDown ? '⛔ כל מפתחות Groq הגיעו ללימיט היומי. הוסף GROQ_API_KEY_3 מחשבון אחר.' : '❌ שגיאה בחיבור ל-AI.' });
+                        const ownerMsg = refreshTime
+                            ? `⛔ כל מפתחות Groq נגמרו.\nמתחדש בשעה *${refreshTime}*`
+                            : '⛔ כל מפתחות Groq נגמרו. בדוק את הלימיטים.';
+                        await sock.sendMessage(jid, { text: ownerMsg });
                     }
                     continue;
                 }
