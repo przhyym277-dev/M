@@ -10,9 +10,28 @@ const { Boom } = require('@hapi/boom');
 const pino = require('pino');
 
 const https = require('https');
-const GROQ_KEYS = [process.env.GROQ_API_KEY, process.env.GROQ_API_KEY_2].filter(Boolean);
+const GROQ_KEYS = [
+    process.env.GROQ_API_KEY,
+    process.env.GROQ_API_KEY_2,
+    process.env.GROQ_API_KEY_3,
+].filter(Boolean);
 let groqKeyIndex = 0;
-function getGroqClient() { return new Groq({ apiKey: GROQ_KEYS[groqKeyIndex] }); }
+// Per-key cooldown when TPD is hit: key → timestamp it's blocked until
+const groqKeyCooldown = new Map();
+
+function getGroqClient() {
+    return new Groq({ apiKey: GROQ_KEYS[groqKeyIndex] });
+}
+
+function nextAvailableKeyIndex() {
+    const now = Date.now();
+    for (let i = 0; i < GROQ_KEYS.length; i++) {
+        const idx = (groqKeyIndex + i) % GROQ_KEYS.length;
+        const blocked = groqKeyCooldown.get(idx) || 0;
+        if (now >= blocked) return idx;
+    }
+    return -1; // all on cooldown
+}
 const OWNER_NUMBER = process.env.OWNER_PHONE;
 const OWNER_LID = process.env.OWNER_LID;
 const OWNER_JID = OWNER_NUMBER + '@s.whatsapp.net';
@@ -470,15 +489,21 @@ async function getAIResponse(jid, userMessage, mode) {
     if (!conversations.has(jid)) conversations.set(jid, []);
     const history = conversations.get(jid);
     history.push({ role: 'user', content: userMessage });
-    if (history.length > 16) history.splice(0, history.length - 16);
+    if (history.length > 10) history.splice(0, history.length - 10);
 
     for (let attempt = 0; attempt < GROQ_KEYS.length; attempt++) {
+        const keyIdx = nextAvailableKeyIndex();
+        if (keyIdx === -1) {
+            console.log('⛔ כל מפתחות Groq בהקפאה');
+            return { reply: null, understood: false, allKeysDown: true };
+        }
+        groqKeyIndex = keyIdx;
         try {
             const client = getGroqClient();
             const completion = await client.chat.completions.create({
                 model: 'llama-3.3-70b-versatile',
                 messages: [{ role: 'system', content: systemPrompt }, ...history],
-                max_tokens: 500,
+                max_tokens: 380,
                 temperature: 0.7,
             });
             const raw = completion.choices[0]?.message?.content || '';
@@ -486,16 +511,23 @@ async function getAIResponse(jid, userMessage, mode) {
             return { ...parseAIReply(raw), understood: true };
         } catch (err) {
             const is429 = err.message?.includes('429') || err.status === 429;
-            if (is429 && attempt < GROQ_KEYS.length - 1) {
+            if (is429) {
+                // Parse retry-after from error message (e.g. "Please try again in 22m14.88s")
+                const retryMatch = err.message?.match(/try again in (\d+)m([\d.]+)s/);
+                const cooldownMs = retryMatch
+                    ? (Number(retryMatch[1]) * 60 + Number(retryMatch[2])) * 1000 + 5000
+                    : 25 * 60 * 1000;
+                groqKeyCooldown.set(groqKeyIndex, Date.now() + cooldownMs);
+                const mins = Math.ceil(cooldownMs / 60000);
+                console.log(`⚠️ Groq key ${groqKeyIndex + 1} הגיע ללימיט — מוקפא ${mins} דק'`);
                 groqKeyIndex = (groqKeyIndex + 1) % GROQ_KEYS.length;
-                console.log(`⚠️ Groq key ${attempt + 1} הגיע ללימיט, עובר למפתח ${groqKeyIndex + 1}`);
                 continue;
             }
             console.error('Groq error:', err.message);
             return { reply: null, understood: false };
         }
     }
-    return { reply: null, understood: false };
+    return { reply: null, understood: false, allKeysDown: true };
 }
 
 function parseOwnerCommand(text) {
@@ -1374,12 +1406,13 @@ ${existingKnowledge}
                 await presence('paused');
 
                 if (!understood || !reply) {
-                    console.log(`❌ Groq נכשל`);
+                    const allDown = !understood;
+                    console.log(`❌ Groq נכשל${allDown ? ' — כל המפתחות בהקפאה' : ''}`);
                     if (!isOwner) {
-                        await sock.sendMessage(jid, { text: 'רגע אחד, בודק עבורך... 🔄' });
-                        await notifyOwner(`🔔 לקוח ממתין לתשובה\nשם: ${crm.getCustomer(jid)?.name || 'לא ידוע'}\nמספר: ${jidToPhone(jid)}\nהודעה: "${userText}"`);
+                        await sock.sendMessage(jid, { text: 'קיבלנו את הפנייה שלך! נציג יחזור אליך תוך דקות 😊' });
+                        await notifyOwner(`🔔 *לקוח ממתין לתשובה*\nשם: ${crm.getCustomer(jid)?.name || 'לא ידוע'}\nמספר: ${jidToPhone(jid) || jid}\nהודעה: "${userText}"${allDown ? '\n\n⛔ כל מפתחות Groq נגמרו — צריך מפתח מחשבון אחר' : ''}`);
                     } else {
-                        await sock.sendMessage(jid, { text: '❌ שגיאה בחיבור ל-AI.' });
+                        await sock.sendMessage(jid, { text: allDown ? '⛔ כל מפתחות Groq הגיעו ללימיט היומי. הוסף GROQ_API_KEY_3 מחשבון אחר.' : '❌ שגיאה בחיבור ל-AI.' });
                     }
                     continue;
                 }
