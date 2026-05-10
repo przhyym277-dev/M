@@ -4,6 +4,7 @@ const QRCode = require('qrcode');
 const Groq = require('groq-sdk');
 const crm = require('./crm');
 const { generateQuote } = require('./quote');
+const { generateContract } = require('./contract');
 const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion } = require('@whiskeysockets/baileys');
 const { Boom } = require('@hapi/boom');
 const pino = require('pino');
@@ -42,6 +43,9 @@ let pendingMeetingApproval = null;
 // Do Not Disturb mode
 let doNotDisturb = false;
 let missedMessages = []; // { name, phone, text } — collected while DND is on
+
+// Follow-up tracking: jid → timestamp of last alert sent
+const followUpSentAt = new Map();
 
 async function parseCalendarEvent(text) {
     const now = new Date().toLocaleString('he-IL', { timeZone: 'Asia/Jerusalem' });
@@ -536,6 +540,10 @@ function parseOwnerCommand(text) {
     if (summaryMatch) return { cmd: 'customer_summary', name: summaryMatch[1].trim() };
     // "הוסף אירוע [title] בתאריך [date] בשעה [time]" — parsed by AI
     if (/^הוסף אירוע|^אירוע חדש/.test(t)) return { cmd: 'calendar_add_raw', text: t };
+    const broadcastMatch = t.match(/^שדר\s+([֐-׿\w]+)\s+([\s\S]+)$/);
+    if (broadcastMatch) return { cmd: 'broadcast', filter: broadcastMatch[1].trim(), msg: broadcastMatch[2].trim() };
+    const contractMatch = t.match(/^חוזה\s+([0-9]+)\s+(.+?)\s+([0-9]+)(?:\s+([0-9]+))?$/);
+    if (contractMatch) return { cmd: 'contract', phone: contractMatch[1], service: contractMatch[2].trim(), amount: Number(contractMatch[3]), days: Number(contractMatch[4] || 14) };
     if (/^לקוחות$|^רשימה$/.test(t)) return { cmd: 'list' };
     if (/^מי דיבר$|^שמות$/.test(t))  return { cmd: 'names' };
     if (/^עבור למצב ליד$|^מצב ליד$/.test(t))           return { cmd: 'mode_lead' };
@@ -582,6 +590,128 @@ function formatNamesList() {
         const email = c.email ? ` | 📧 ${c.email}` : '';
         return `${emoji} ${name}${email}`;
     }).join('\n');
+}
+
+async function scoreLead(jid) {
+    try {
+        const history = conversations.get(jid) || [];
+        if (history.length < 2) return null;
+        const msgs = history.slice(-8).map(m =>
+            `${m.role === 'user' ? 'לקוח' : 'בוט'}: ${m.content.substring(0, 120)}`
+        ).join('\n');
+        const comp = await getGroqClient().chat.completions.create({
+            model: 'llama-3.3-70b-versatile',
+            messages: [{
+                role: 'system',
+                content: 'דרג את הליד מ-1 עד 10 לפי רמת העניין והסבירות לסגירה. 1=לא רלוונטי, 10=מוכן לסגור עכשיו. החזר רק מספר שלם בין 1-10, ללא טקסט נוסף.'
+            }, { role: 'user', content: msgs }],
+            max_tokens: 5, temperature: 0,
+        });
+        const n = parseInt(comp.choices[0]?.message?.content?.trim());
+        return (n >= 1 && n <= 10) ? n : null;
+    } catch { return null; }
+}
+
+async function sendMorningBriefing() {
+    if (!sock || botStatus !== 'connected') return;
+    try {
+        const now = new Date();
+        const todayStr = now.toISOString().slice(0, 10);
+        const todayEvents = calendar.filter(e => e.date === todayStr)
+            .sort((a, b) => (a.time || '').localeCompare(b.time || ''));
+
+        const weekStart = new Date(now);
+        weekStart.setDate(now.getDate() - now.getDay());
+        const weekIncome = incomeLog
+            .filter(e => new Date(e.date) >= weekStart)
+            .reduce((s, e) => s + e.amount, 0);
+        const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+        const monthIncome = incomeLog
+            .filter(e => new Date(e.date) >= monthStart)
+            .reduce((s, e) => s + e.amount, 0);
+
+        const db = crm.getAll();
+        const hotLeads = Object.values(db).filter(c =>
+            ['interested', 'meeting_scheduled'].includes(c.status)
+        );
+
+        let lines = ['☀️ *בוקר טוב יאיר!*\n'];
+
+        if (todayEvents.length > 0) {
+            lines.push('📅 *פגישות היום:*');
+            todayEvents.forEach(e => lines.push(`• ${e.time || '—'} — ${e.title}`));
+        } else {
+            lines.push('📅 אין פגישות היום.');
+        }
+
+        lines.push('');
+        if (hotLeads.length > 0) {
+            lines.push(`🔥 *לידים חמים (${hotLeads.length}):*`);
+            hotLeads.slice(0, 5).forEach(c => {
+                const phone = crm.jidToPhone ? c.phone : c.phone.split('@')[0];
+                const lastSeen = c.lastSeen ? new Date(c.lastSeen).toLocaleDateString('he-IL') : '—';
+                lines.push(`• ${c.name || phone} | ${c.status} | נראה: ${lastSeen}`);
+            });
+        } else {
+            lines.push('🔥 אין לידים חמים כרגע.');
+        }
+
+        lines.push('');
+        lines.push(`💰 *הכנסות השבוע:* ₪${weekIncome.toLocaleString('he-IL')}`);
+        lines.push(`📊 *סה"כ החודש:* ₪${monthIncome.toLocaleString('he-IL')}`);
+        lines.push('\nיום מוצלח! 💪');
+
+        await notifyOwner(lines.join('\n'));
+    } catch (err) {
+        console.error('שגיאה בבריפינג:', err.message);
+    }
+}
+
+function scheduleMorningBriefing() {
+    const now = new Date();
+    const israelNow = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Jerusalem' }));
+    const target = new Date(israelNow);
+    target.setHours(9, 0, 0, 0);
+    if (israelNow >= target) target.setDate(target.getDate() + 1);
+    const delay = target - israelNow;
+    console.log(`⏰ בריפינג בוקר מתוזמן בעוד ${Math.round(delay / 60000)} דקות`);
+    setTimeout(() => {
+        sendMorningBriefing();
+        scheduleMorningBriefing();
+    }, delay);
+}
+
+function scheduleFollowUpCheck() {
+    setInterval(async () => {
+        if (!sock || botStatus !== 'connected') return;
+        const db = crm.getAll();
+        const now = Date.now();
+        const H24 = 24 * 60 * 60 * 1000;
+        const H48 = 48 * 60 * 60 * 1000;
+        for (const c of Object.values(db)) {
+            if (!['interested', 'meeting_scheduled'].includes(c.status)) continue;
+            const lastIn = c.log.filter(l => l.direction === 'in').pop();
+            if (!lastIn) continue;
+            const lastOut = c.log.filter(l => l.direction === 'out').pop();
+            const lastInTime = new Date(c.lastSeen).getTime();
+            const sinceLastIn = now - lastInTime;
+            if (sinceLastIn < H24) continue;
+            // Only alert if last log is incoming (we haven't replied since)
+            if (lastOut && c.log.indexOf(lastOut) > c.log.indexOf(lastIn)) continue;
+            const lastAlerted = followUpSentAt.get(c.phone) || 0;
+            if (now - lastAlerted < H48) continue;
+            followUpSentAt.set(c.phone, now);
+            const hours = Math.round(sinceLastIn / 3600000);
+            const phone = c.phone.split('@')[0].replace(/^972/, '0');
+            await notifyOwner(
+                `🔔 *פולואו-אפ: ${c.name || phone}*\n` +
+                `מספר: ${phone}\nסטטוס: ${c.status}\n` +
+                `לא ענה כבר ${hours} שעות\n` +
+                `הודעה אחרונה: "${lastIn.text.substring(0, 80)}"\n\n` +
+                `לשליחת המשך: *שלח ל${phone} [הודעה]*`
+            );
+        }
+    }, 2 * 60 * 60 * 1000); // every 2 hours
 }
 
 async function analyzeImage(msg, sock, question) {
@@ -657,7 +787,12 @@ async function startBot() {
 
     sock.ev.on('connection.update', ({ connection, lastDisconnect, qr }) => {
         if (qr) { currentQR = qr; botStatus = 'waiting'; console.log('📱 QR זמין — פתח /qr לסריקה'); }
-        if (connection === 'open')       { currentQR = null; botStatus = 'connected'; console.log('✅ מאקס מוכן ומחובר!'); }
+        if (connection === 'open') {
+            currentQR = null; botStatus = 'connected';
+            console.log('✅ מאקס מוכן ומחובר!');
+            scheduleMorningBriefing();
+            scheduleFollowUpCheck();
+        }
         if (connection === 'connecting') { botStatus = 'scanned'; console.log('🔄 מתחבר...'); }
         if (connection === 'close') {
             const code = new Boom(lastDisconnect?.error)?.output?.statusCode;
@@ -847,8 +982,18 @@ ${existingKnowledge}
 • \`לילה טוב\` — הבוט מפסיק לענות ללקוחות
 • \`בוקר טוב\` — חוזר לפעילות + סיכום מי כתב
 
-👤 *סיכום לקוח*
+👤 *סיכום וניתוח לקוח*
 • \`סיכום [שם]\` — ניתוח AI על לקוח לפי היסטוריה
+• ⭐ ניקוד ליד אוטומטי 1-10 בכל שינוי סטטוס
+
+📢 *שידור*
+• \`שדר מתעניינים [הודעה]\` — שליחה לכולם בסטטוס
+• \`שדר חדשים [הודעה]\` | \`שדר קרים [הודעה]\`
+• \`שדר כולם [הודעה]\` — לכל הלקוחות
+
+📜 *חוזה*
+• \`חוזה [טלפון] [חבילה] [סכום]\`
+• \`חוזה [טלפון] [חבילה] [סכום] [ימי עבודה]\`
 
 🗑️ *ניהול*
 • \`נקה הכל\` — מחיקת הכל (חוץ מידע עסקי)` });
@@ -1115,6 +1260,62 @@ ${existingKnowledge}
                         await sock.sendMessage(jid, { text: `✅ עסקה נסגרה! ${c?.name || jidToPhone(ph)} 🎉` });
                         continue;
                     }
+                    if (cmd?.cmd === 'broadcast') {
+                        const STATUS_MAP = {
+                            'מתעניינים': 'interested', 'חדשים': 'new',
+                            'פגישות': 'meeting_scheduled', 'קרים': 'cold',
+                            'סגורים': 'closed',
+                        };
+                        const filterStatus = STATUS_MAP[cmd.filter] || null;
+                        const db = crm.getAll();
+                        const targets = Object.values(db).filter(c =>
+                            (filterStatus ? c.status === filterStatus : true) &&
+                            c.phone.endsWith('@s.whatsapp.net')
+                        );
+                        if (targets.length === 0) {
+                            await sock.sendMessage(jid, { text: `❌ אין לקוחות בסטטוס "${cmd.filter}"` });
+                            continue;
+                        }
+                        await sock.sendMessage(jid, { text: `📢 שולח ל-${targets.length} לקוחות...` });
+                        let sent = 0;
+                        for (const c of targets) {
+                            try {
+                                await sock.sendMessage(c.phone, { text: cmd.msg });
+                                crm.addLog(c.phone, 'out', `[שידור] ${cmd.msg.substring(0, 60)}`);
+                                sent++;
+                                await new Promise(r => setTimeout(r, 1500));
+                            } catch {}
+                        }
+                        await sock.sendMessage(jid, { text: `✅ השידור הסתיים — נשלח ל-${sent}/${targets.length} לקוחות.` });
+                        continue;
+                    }
+                    if (cmd?.cmd === 'contract') {
+                        const targetJid = normalizePhone(cmd.phone) + '@s.whatsapp.net';
+                        const customer = crm.getCustomer(targetJid);
+                        const customerName = customer?.name || cmd.phone;
+                        const pkgKey = Object.keys(PACKAGES).find(k => cmd.service.toLowerCase().includes(k.toLowerCase())) || cmd.service;
+                        const pkgDetails = PACKAGES[pkgKey]?.details || cmd.service;
+                        try {
+                            const buf = await generateContract({
+                                customerName,
+                                serviceName: pkgKey,
+                                serviceDetails: pkgDetails,
+                                price: cmd.amount,
+                                deliveryDays: cmd.days,
+                            });
+                            await sock.sendMessage(targetJid, {
+                                document: buf,
+                                mimetype: 'text/html',
+                                fileName: `חוזה עבודה — ${customerName}.html`,
+                                caption: `📄 חוזה העבודה שלנו מוכן! פתח את הקובץ, קרא ושלח לי אישור 😊`,
+                            });
+                            crm.addLog(targetJid, 'out', `[חוזה נשלח: ${pkgKey} ₪${cmd.amount}]`);
+                            await sock.sendMessage(jid, { text: `✅ חוזה נשלח ל-${customerName} — ${pkgKey} ₪${cmd.amount.toLocaleString('he-IL')}` });
+                        } catch (err) {
+                            await sock.sendMessage(jid, { text: `❌ שגיאה ביצירת חוזה: ${err.message}` });
+                        }
+                        continue;
+                    }
                     if (cmd?.cmd === 'customer_summary') {
                         const db = crm.getAll();
                         const found = Object.values(db).find(c =>
@@ -1208,7 +1409,10 @@ ${existingKnowledge}
                         if (status === 'meeting_scheduled') {
                             await notifyOwner(`🔥 *ליד חם!* ${displayName} רוצה לקבוע פגישה!${phoneLine}\nהודעה: "${userText}"`);
                         } else if (status === 'interested') {
-                            await notifyOwner(`⚡ *${displayName} מתעניין!*${phoneLine}`);
+                            scoreLead(jid).then(score => {
+                                const stars = score ? ` | ⭐ ${score}/10` : '';
+                                notifyOwner(`⚡ *${displayName} מתעניין!*${phoneLine}${stars}`);
+                            }).catch(() => notifyOwner(`⚡ *${displayName} מתעניין!*${phoneLine}`));
                         }
                     }
 
