@@ -536,6 +536,7 @@ async function getAIResponse(jid, userMessage, mode) {
 
 function parseOwnerCommand(text) {
     const t = text.trim();
+    if (/^api$|^סטטוס api$|^מפתחות$/i.test(t)) return { cmd: 'api_status' };
     if (/^נקה הכל$|^מחק הכל$/.test(t)) return { cmd: 'clear_all' };
     if (/^מצב למידה$|^למד$/.test(t))        return { cmd: 'mode_learning' };
     if (/^סיים למידה$|^שמור ידע$|^סיים$/.test(t)) return { cmd: 'save_learning' };
@@ -900,6 +901,24 @@ async function startBot() {
                 if (isOwner) {
                     const cmd = parseOwnerCommand(userText);
 
+                    if (cmd?.cmd === 'api_status') {
+                        const now = Date.now();
+                        const lines = ['🔑 *סטטוס מפתחות Groq:*\n'];
+                        GROQ_KEYS.forEach((k, i) => {
+                            const blocked = groqKeyCooldown.get(i) || 0;
+                            if (blocked > now) {
+                                const refreshTime = new Date(blocked).toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Jerusalem' });
+                                const minsLeft = Math.ceil((blocked - now) / 60000);
+                                lines.push(`❌ מפתח ${i + 1} — נגמר | מתחדש בשעה *${refreshTime}* (עוד ${minsLeft} דק')`);
+                            } else {
+                                lines.push(`✅ מפתח ${i + 1} — פעיל`);
+                            }
+                        });
+                        const active = GROQ_KEYS.filter((_, i) => (groqKeyCooldown.get(i) || 0) <= now).length;
+                        lines.push(`\nפעילים: ${active}/${GROQ_KEYS.length}`);
+                        await sock.sendMessage(jid, { text: lines.join('\n') });
+                        continue;
+                    }
                     if (cmd?.cmd === 'mode_learning') {
                         ownerMode = 'learning';
                         conversations.delete('__learning__');
