@@ -224,7 +224,6 @@ function isOwnerPhone(jid) {
 function getText(msg) {
     return msg.message?.conversation
         || msg.message?.extendedTextMessage?.text
-        || msg.message?.imageMessage?.caption
         || '';
 }
 
@@ -585,6 +584,35 @@ function formatNamesList() {
     }).join('\n');
 }
 
+async function analyzeImage(msg, sock, question) {
+    try {
+        const { downloadMediaMessage } = require('@whiskeysockets/baileys');
+        const buffer = await downloadMediaMessage(msg, 'buffer', {}, {
+            logger: pino({ level: 'silent' }),
+            reuploadRequest: sock.updateMediaMessage,
+        });
+        const base64 = buffer.toString('base64');
+        const mimeType = msg.message?.imageMessage?.mimetype || 'image/jpeg';
+        const prompt = question || 'תאר את התמונה בפירוט בעברית.';
+        const completion = await getGroqClient().chat.completions.create({
+            model: 'meta-llama/llama-4-scout-17b-16e-instruct',
+            messages: [{
+                role: 'user',
+                content: [
+                    { type: 'text', text: prompt },
+                    { type: 'image_url', image_url: { url: `data:${mimeType};base64,${base64}` } }
+                ]
+            }],
+            max_tokens: 600,
+            temperature: 0.5,
+        });
+        return completion.choices[0]?.message?.content?.trim() || null;
+    } catch (err) {
+        console.error('שגיאה בניתוח תמונה:', err.message);
+        return null;
+    }
+}
+
 async function transcribeAudio(msg, sock) {
     try {
         const { downloadMediaMessage } = require('@whiskeysockets/baileys');
@@ -651,7 +679,8 @@ async function startBot() {
 
                 let userText = getText(msg);
                 const hasAudio = !!(msg.message?.audioMessage);
-                if (!userText && !hasAudio) continue;
+                const hasImage = !!(msg.message?.imageMessage);
+                if (!userText && !hasAudio && !hasImage) continue;
 
                 const pushName = msg.pushName || null;
                 const isOwner = isOwnerPhone(jid);
@@ -675,6 +704,24 @@ async function startBot() {
                     }
                     userText = voiceTranscript;
                 }
+
+                // Image message — analyze and inject into conversation
+                let imageDescription = null;
+                if (hasImage) {
+                    await sock.sendPresenceUpdate('composing', jid).catch(() => {});
+                    const caption = msg.message.imageMessage.caption || null;
+                    imageDescription = await analyzeImage(msg, sock, caption);
+                    if (!imageDescription) {
+                        if (isOwner) await sock.sendMessage(jid, { text: '❌ לא הצלחתי לנתח את התמונה.' });
+                        continue;
+                    }
+                    // Build a synthetic message for the AI: image description + optional caption
+                    userText = caption
+                        ? `[שלח תמונה — תיאור: ${imageDescription}]\nשאלה/הערה: ${caption}`
+                        : `[שלח תמונה — תיאור: ${imageDescription}]`;
+                    console.log(`🖼️ תמונה מנותחת: "${imageDescription.substring(0, 80)}"`);
+                }
+
                 if (!userText) continue;
 
                 console.log(`📩 [${isOwner ? 'יאיר' : displayId}]${voiceTranscript ? ' 🎤' : ''}: ${userText}`);
@@ -1206,7 +1253,9 @@ ${existingKnowledge}
                 }
 
                 console.log(`💬 תשובה ל-${isOwner ? `יאיר (${ownerMode})` : jid}`);
-                const finalReply = voiceTranscript ? `🎤 _"${voiceTranscript}"_\n\n${reply}` : reply;
+                let finalReply = reply;
+                if (voiceTranscript) finalReply = `🎤 _"${voiceTranscript}"_\n\n${reply}`;
+                else if (imageDescription) finalReply = `🖼️ _ניתוח תמונה_\n\n${reply}`;
                 await sock.sendMessage(jid, { text: finalReply }, { quoted: msg });
 
             } catch (err) {
