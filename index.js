@@ -18,6 +18,9 @@ const GROQ_KEYS = [
 let groqKeyIndex = 0;
 // Per-key cooldown when TPD is hit: key → timestamp it's blocked until
 const groqKeyCooldown = new Map();
+// Per-key token usage tracking (accumulated since last restart)
+const groqKeyUsage = new Map();
+const GROQ_DAILY_LIMIT = 100_000;
 
 function getGroqClient() {
     return new Groq({ apiKey: GROQ_KEYS[groqKeyIndex] });
@@ -508,6 +511,8 @@ async function getAIResponse(jid, userMessage, mode) {
             });
             const raw = completion.choices[0]?.message?.content || '';
             history.push({ role: 'assistant', content: raw });
+            const tokensUsed = completion.usage?.total_tokens || 0;
+            groqKeyUsage.set(groqKeyIndex, (groqKeyUsage.get(groqKeyIndex) || 0) + tokensUsed);
             return { ...parseAIReply(raw), understood: true };
         } catch (err) {
             const is429 = err.message?.includes('429') || err.status === 429;
@@ -906,12 +911,16 @@ async function startBot() {
                         const lines = ['🔑 *סטטוס מפתחות Groq:*\n'];
                         GROQ_KEYS.forEach((k, i) => {
                             const blocked = groqKeyCooldown.get(i) || 0;
+                            const used = groqKeyUsage.get(i) || 0;
+                            const remaining = Math.max(0, GROQ_DAILY_LIMIT - used);
+                            const pct = Math.round(used / GROQ_DAILY_LIMIT * 100);
+                            const bar = '█'.repeat(Math.round(pct / 10)) + '░'.repeat(10 - Math.round(pct / 10));
                             if (blocked > now) {
                                 const refreshTime = new Date(blocked).toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Jerusalem' });
                                 const minsLeft = Math.ceil((blocked - now) / 60000);
-                                lines.push(`❌ מפתח ${i + 1} — נגמר | מתחדש בשעה *${refreshTime}* (עוד ${minsLeft} דק')`);
+                                lines.push(`❌ מפתח ${i + 1} — נגמר\n   מתחדש בשעה *${refreshTime}* (עוד ${minsLeft} דק')`);
                             } else {
-                                lines.push(`✅ מפתח ${i + 1} — פעיל`);
+                                lines.push(`✅ מפתח ${i + 1} — פעיל\n   ${bar} ${pct}%\n   נוצלו: ${used.toLocaleString('he-IL')} | נשאר: ~${remaining.toLocaleString('he-IL')} טוקנים`);
                             }
                         });
                         const active = GROQ_KEYS.filter((_, i) => (groqKeyCooldown.get(i) || 0) <= now).length;
