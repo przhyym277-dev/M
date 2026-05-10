@@ -36,7 +36,7 @@ let incomeLog = loadJSON('INCOME_DATA');
 let calendar  = loadJSON('CALENDAR_DATA');
 let calendarIdCounter = (calendar.length ? Math.max(...calendar.map(e => e.id)) + 1 : 1);
 
-// Pending meeting approval from owner: { customerJid, name, slot }
+// Pending meeting approval from owner: { customerJid, name, slots: [{date,time,day},...] }
 let pendingMeetingApproval = null;
 
 // Do Not Disturb mode
@@ -429,11 +429,13 @@ const LEARNING_PROMPT = `אתה לומד על העסק של יאיר כדי לע
 function buildSystemPrompt(mode) {
     const knowledge = process.env.BUSINESS_KNOWLEDGE;
     const knowledgeBlock = knowledge ? `\n\n---\nידע על העסק:\n${knowledge}` : '';
+    const today = new Date().toLocaleDateString('he-IL', { timeZone: 'Asia/Jerusalem', weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+    const dateBlock = `\n\n📅 תאריך היום: ${today}`;
     if (mode === 'learning') return LEARNING_PROMPT;
     if (mode === 'meeting') return MEETING_PROMPT + knowledgeBlock;
     if (mode === 'crisis')  return CRISIS_PROMPT  + knowledgeBlock;
     if (mode === 'assistant') return ASSISTANT_PROMPT + knowledgeBlock;
-    return SALES_PROMPT + knowledgeBlock;
+    return SALES_PROMPT + dateBlock + knowledgeBlock;
 }
 
 const conversations = new Map();
@@ -526,9 +528,13 @@ function parseOwnerCommand(text) {
     if (/^יומן$/.test(t)) return { cmd: 'calendar_show' };
     const calDel = t.match(/^מחק אירוע\s+(\d+)$/);
     if (calDel) return { cmd: 'calendar_delete', id: Number(calDel[1]) };
-    if (/^אשר פגישה$|^אשר$/.test(t) && pendingMeetingApproval) return { cmd: 'meeting_approve' };
+    const approveSlot = t.match(/^אשר פגישה\s+([1-3])$/);
+    if (approveSlot && pendingMeetingApproval) return { cmd: 'meeting_approve', slotIndex: Number(approveSlot[1]) - 1 };
+    if (/^אשר פגישה$|^אשר$/.test(t) && pendingMeetingApproval) return { cmd: 'meeting_approve', slotIndex: 0 };
     const meetingDecline = t.match(/^דחה פגישה(?:\s+(.+))?$/);
     if (meetingDecline && pendingMeetingApproval) return { cmd: 'meeting_decline', alt: meetingDecline[1] || null };
+    const summaryMatch = t.match(/^סיכום\s+(.+)$/);
+    if (summaryMatch) return { cmd: 'customer_summary', name: summaryMatch[1].trim() };
     // "הוסף אירוע [title] בתאריך [date] בשעה [time]" — parsed by AI
     if (/^הוסף אירוע|^אירוע חדש/.test(t)) return { cmd: 'calendar_add_raw', text: t };
     if (/^לקוחות$|^רשימה$/.test(t)) return { cmd: 'list' };
@@ -751,15 +757,18 @@ ${existingKnowledge}
 • \`יומן\` — הצגת אירועים קרובים
 • \`הוסף אירוע פגישה עם דוד ב-12/05 בשעה 10:00\`
 • \`מחק אירוע [מספר]\`
-• \`אשר פגישה\` — אישור פגישה עם לקוח
+• \`אשר פגישה 1\` / \`2\` / \`3\` — אישור אפשרות פגישה
 • \`דחה פגישה [זמן חלופי]\` — דחיה + הצעת זמן
 
 🌙 *מצב שקט*
 • \`לילה טוב\` — הבוט מפסיק לענות ללקוחות
 • \`בוקר טוב\` — חוזר לפעילות + סיכום מי כתב
 
+👤 *סיכום לקוח*
+• \`סיכום [שם]\` — ניתוח AI על לקוח לפי היסטוריה
+
 🗑️ *ניהול*
-• \`נקה הכל\` — מחיקת CRM וזיכרון` });
+• \`נקה הכל\` — מחיקת הכל (חוץ מידע עסקי)` });
                         continue;
                     }
                     if (cmd?.cmd === 'mode_meeting') {
@@ -846,11 +855,11 @@ ${existingKnowledge}
                     if (cmd?.cmd === 'meeting_approve') {
                         const m = pendingMeetingApproval;
                         pendingMeetingApproval = null;
-                        const slotText = `${DAY_NAMES[new Date(m.slot.date).getDay()]} ${new Date(m.slot.date).getDate()}/${new Date(m.slot.date).getMonth()+1} בשעה ${m.slot.time}`;
-                        // Add to calendar
-                        calendar.push({ id: calendarIdCounter++, title: `פגישה עם ${m.name}`, date: m.slot.date, time: m.slot.time, duration: 60 });
+                        const slot = m.slots[cmd.slotIndex] || m.slots[0];
+                        const d = new Date(slot.date);
+                        const slotText = `${DAY_NAMES[d.getDay()]} ${d.getDate()}/${d.getMonth()+1} בשעה ${slot.time}`;
+                        calendar.push({ id: calendarIdCounter++, title: `פגישה עם ${m.name}`, date: slot.date, time: slot.time, duration: 60 });
                         await saveCalendar();
-                        // Notify customer
                         await sock.sendMessage(m.customerJid, { text: `✅ מעולה! קבענו פגישה ל${slotText}.\nיאיר ייצור איתך קשר לקראת הפגישה 😊` });
                         crm.addLog(m.customerJid, 'out', `[פגישה נקבעה: ${slotText}]`);
                         crm.setStatus(m.customerJid, 'meeting_scheduled');
@@ -914,7 +923,13 @@ ${existingKnowledge}
                         const crmPath = require('path').join(__dirname, 'crm.json');
                         fs.writeFileSync(crmPath, '{}', 'utf8');
                         pendingQuotes.clear();
-                        await sock.sendMessage(jid, { text: '🗑️ נמחק הכל — CRM, היסטוריית שיחות, הצעות ממתינות.' });
+                        pendingMeetingApproval = null;
+                        projects = [];
+                        incomeLog = [];
+                        calendar = [];
+                        calendarIdCounter = 1;
+                        await Promise.all([saveProjects(), saveIncome(), saveCalendar()]);
+                        await sock.sendMessage(jid, { text: '🗑️ *נמחק הכל!*\n✅ CRM, שיחות, הצעות, פרויקטים, הכנסות, יומן — הכל נקי.\n🧠 ידע העסקי נשמר.' });
                         continue;
                     }
                     if (cmd?.cmd === 'list') {
@@ -1017,6 +1032,40 @@ ${existingKnowledge}
                         await sock.sendMessage(jid, { text: `✅ עסקה נסגרה! ${c?.name || jidToPhone(ph)} 🎉` });
                         continue;
                     }
+                    if (cmd?.cmd === 'customer_summary') {
+                        const db = crm.getAll();
+                        const found = Object.values(db).find(c =>
+                            (c.name && c.name.includes(cmd.name)) ||
+                            (c.phone && c.phone.includes(cmd.name))
+                        );
+                        if (!found) {
+                            await sock.sendMessage(jid, { text: `❌ לא נמצא לקוח בשם "${cmd.name}"` });
+                            continue;
+                        }
+                        await sock.sendMessage(jid, { text: '⏳ מנתח...' });
+                        const STATUS_EMOJI = { new: '🆕', interested: '🔥', meeting_scheduled: '📅', closed: '✅', cold: '❄️' };
+                        const lastMessages = found.log.slice(-12).map(l =>
+                            `${l.direction === 'in' ? 'לקוח' : 'בוט'}: ${l.text}`
+                        ).join('\n');
+                        try {
+                            const comp = await getGroqClient().chat.completions.create({
+                                model: 'llama-3.3-70b-versatile',
+                                messages: [{
+                                    role: 'system',
+                                    content: 'אתה מנתח שיחות מכירה לבעלים של עסק. תן סיכום קצר ומעשי על לקוח: רמת עניין, מה הוא מחפש, חששות שהעלה, והמלצה לצעד הבא. עברית קצרה וחדה.'
+                                }, {
+                                    role: 'user',
+                                    content: `שם: ${found.name || cmd.name}\nסטטוס: ${found.status}\nהודעות:\n${lastMessages || 'אין היסטוריה'}`
+                                }],
+                                max_tokens: 300, temperature: 0.4,
+                            });
+                            const analysis = comp.choices[0]?.message?.content || '';
+                            await sock.sendMessage(jid, { text: `${STATUS_EMOJI[found.status] || '•'} *${found.name || cmd.name}*\nסטטוס: ${found.status}\n\n${analysis}` });
+                        } catch {
+                            await sock.sendMessage(jid, { text: `${STATUS_EMOJI[found.status] || '•'} *${found.name || cmd.name}*\nסטטוס: ${found.status} | הודעות: ${found.log.length}` });
+                        }
+                        continue;
+                    }
                 }
 
                 // DND mode — don't respond to customers
@@ -1080,18 +1129,29 @@ ${existingKnowledge}
                         }
                     }
 
-                    // Meeting request — check calendar and ask owner
+                    // Meeting request — propose slots to customer, notify owner
                     if (meetingRequest) {
-                        const slots = findFreeSlots(2);
+                        const slots = findFreeSlots(3);
                         if (slots.length === 0) {
                             await notifyOwner(`📅 *${displayName} רוצה לקבוע פגישה*\n${phoneLine}\nאין זמן פנוי ביומן — תוסיף זמינות ב: *הוסף אירוע*`);
+                            crm.addLog(jid, 'out', '[בקשת פגישה — אין זמן פנוי]');
                         } else {
-                            const slot = slots[0];
-                            const slotText = `${slot.day} ${new Date(slot.date).getDate()}/${new Date(slot.date).getMonth()+1} ב-${slot.time}`;
-                            pendingMeetingApproval = { customerJid: jid, name: displayName, slot };
-                            await notifyOwner(`📅 *${displayName} רוצה לקבוע פגישה*\n${phoneLine}\n\nהצעת זמן: *${slotText}*\n\nלאשר: *אשר פגישה*\nלדחות: *דחה פגישה [זמן אחר]*`);
+                            const nums = ['1️⃣', '2️⃣', '3️⃣'];
+                            const slotsText = slots.map((s, i) => {
+                                const d = new Date(s.date);
+                                return `${nums[i]} *${s.day} ${d.getDate()}/${d.getMonth()+1}* בשעה ${s.time}`;
+                            }).join('\n');
+                            pendingMeetingApproval = { customerJid: jid, name: displayName, slots };
+                            // Send options to customer
+                            await sock.sendMessage(jid, { text: `📅 בדקתי זמינות! הנה האפשרויות הפנויות:\n\n${slotsText}\n\nאיזה זמן מתאים לך?` });
+                            crm.addLog(jid, 'out', `[הצעת זמנים לפגישה: ${slots.map(s=>s.date+' '+s.time).join(', ')}]`);
+                            // Notify owner to approve
+                            const ownerSlots = slots.map((s, i) => {
+                                const d = new Date(s.date);
+                                return `${i+1}. ${s.day} ${d.getDate()}/${d.getMonth()+1} ב-${s.time}`;
+                            }).join('\n');
+                            await notifyOwner(`📅 *${displayName} רוצה לקבוע פגישה*\n${phoneLine}\n\nהצעתי ללקוח:\n${ownerSlots}\n\nלאחר שיבחר, אשר:\n*אשר פגישה 1* / *אשר פגישה 2* / *אשר פגישה 3*\nלדחות: *דחה פגישה [זמן אחר]*`);
                         }
-                        crm.addLog(jid, 'out', '[בקשת פגישה נשלחה לאישור הבעלים]');
                     }
 
                     // Quote request — ask owner for approval
