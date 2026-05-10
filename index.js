@@ -585,6 +585,27 @@ function formatNamesList() {
     }).join('\n');
 }
 
+async function transcribeAudio(msg, sock) {
+    try {
+        const { downloadMediaMessage } = require('@whiskeysockets/baileys');
+        const buffer = await downloadMediaMessage(msg, 'buffer', {}, {
+            logger: pino({ level: 'silent' }),
+            reuploadRequest: sock.updateMediaMessage,
+        });
+        const { toFile } = require('groq-sdk');
+        const file = await toFile(buffer, 'voice.ogg', { type: 'audio/ogg' });
+        const result = await getGroqClient().audio.transcriptions.create({
+            file,
+            model: 'whisper-large-v3-turbo',
+            language: 'he',
+        });
+        return result.text?.trim() || null;
+    } catch (err) {
+        console.error('שגיאה בתמלול:', err.message);
+        return null;
+    }
+}
+
 async function notifyOwner(text) {
     if (!sock || botStatus !== 'connected') return;
     try { await sock.sendMessage(OWNER_JID, { text }); } catch (err) {
@@ -628,8 +649,9 @@ async function startBot() {
                 if (!jid || jid === 'status@broadcast') continue;
                 if (jid.endsWith('@g.us')) continue;
 
-                const userText = getText(msg);
-                if (!userText) continue;
+                let userText = getText(msg);
+                const hasAudio = !!(msg.message?.audioMessage);
+                if (!userText && !hasAudio) continue;
 
                 const pushName = msg.pushName || null;
                 const isOwner = isOwnerPhone(jid);
@@ -641,7 +663,21 @@ async function startBot() {
                 }
 
                 const displayId = jidToPhone(jid) || crm.getCustomer(jid)?.name || pushName || jid.split('@')[0];
-                console.log(`📩 [${isOwner ? 'יאיר' : displayId}]: ${userText}`);
+
+                // Voice message — transcribe before processing
+                let voiceTranscript = null;
+                if (!userText && hasAudio) {
+                    await sock.sendPresenceUpdate('composing', jid).catch(() => {});
+                    voiceTranscript = await transcribeAudio(msg, sock);
+                    if (!voiceTranscript) {
+                        if (isOwner) await sock.sendMessage(jid, { text: '❌ לא הצלחתי לתמלל את ההודעה הקולית.' });
+                        continue;
+                    }
+                    userText = voiceTranscript;
+                }
+                if (!userText) continue;
+
+                console.log(`📩 [${isOwner ? 'יאיר' : displayId}]${voiceTranscript ? ' 🎤' : ''}: ${userText}`);
 
                 if (isOwner) {
                     const cmd = parseOwnerCommand(userText);
@@ -1170,7 +1206,8 @@ ${existingKnowledge}
                 }
 
                 console.log(`💬 תשובה ל-${isOwner ? `יאיר (${ownerMode})` : jid}`);
-                await sock.sendMessage(jid, { text: reply }, { quoted: msg });
+                const finalReply = voiceTranscript ? `🎤 _"${voiceTranscript}"_\n\n${reply}` : reply;
+                await sock.sendMessage(jid, { text: finalReply }, { quoted: msg });
 
             } catch (err) {
                 console.error('❌ שגיאה בהודעה:', err.message);
