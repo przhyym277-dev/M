@@ -38,6 +38,7 @@ const YTDL_COMMON = {
     noWarnings: true,
     noCheckCertificates: true,
     jsRuntimes: `node:${process.execPath}`,
+    extractorArgs: 'youtube:player_client=android',
     ...(fs.existsSync(COOKIES_FILE) ? { cookies: COOKIES_FILE } : {}),
 };
 
