@@ -55,10 +55,11 @@ let reminderIdCounter = 1;
 function loadJSON(key, fallback = []) {
     try { return JSON.parse(process.env[key] || 'null') || fallback; } catch { return fallback; }
 }
-let projects  = loadJSON('PROJECTS_DATA');
-let incomeLog = loadJSON('INCOME_DATA');
-let calendar  = loadJSON('CALENDAR_DATA');
+let projects   = loadJSON('PROJECTS_DATA');
+let incomeLog  = loadJSON('INCOME_DATA');
+let calendar   = loadJSON('CALENDAR_DATA');
 let calendarIdCounter = (calendar.length ? Math.max(...calendar.map(e => e.id)) + 1 : 1);
+let customBots = loadJSON('CUSTOM_BOTS_DATA', {});
 
 // Pending meeting approval from owner: { customerJid, name, slots: [{date,time,day},...] }
 let pendingMeetingApproval = null;
@@ -218,6 +219,7 @@ async function saveEnvVar(key, value) {
 }
 
 async function saveKnowledgeToRender(knowledge) { await saveEnvVar('BUSINESS_KNOWLEDGE', knowledge); }
+async function saveCustomBots() { await saveEnvVar('CUSTOM_BOTS_DATA', JSON.stringify(customBots)); }
 
 async function saveProjects()  { await saveEnvVar('PROJECTS_DATA',  JSON.stringify(projects)); }
 async function saveIncome()    { await saveEnvVar('INCOME_DATA',    JSON.stringify(incomeLog)); }
@@ -607,6 +609,12 @@ function parseOwnerCommand(text) {
     if (historyMatch) return { cmd: 'history', phone: historyMatch[1] };
     const statusMatch = t.match(/^סטטוס\s+([0-9]+)\s+(.+)$/);
     if (statusMatch) return { cmd: 'setstatus', phone: statusMatch[1], status: statusMatch[2].trim() };
+    // Custom bots
+    const customBotSet = t.match(/^בוט\s+([0-9]+)\s+([\s\S]+)$/);
+    if (customBotSet) return { cmd: 'custom_bot_set', phone: customBotSet[1], prompt: customBotSet[2].trim() };
+    const customBotRemove = t.match(/^בטל בוט\s+([0-9]+)$/);
+    if (customBotRemove) return { cmd: 'custom_bot_remove', phone: customBotRemove[1] };
+    if (/^בוטים$/.test(t)) return { cmd: 'custom_bot_list' };
     return null;
 }
 
@@ -1388,6 +1396,35 @@ ${existingKnowledge}
                         }
                         continue;
                     }
+                    if (cmd?.cmd === 'custom_bot_set') {
+                        const ph = normalizePhone(cmd.phone) + '@s.whatsapp.net';
+                        customBots[ph] = { prompt: cmd.prompt, phone: cmd.phone };
+                        await saveCustomBots();
+                        await sock.sendMessage(ph, { text: `שלום! ${cmd.prompt.split('.')[0].slice(0, 60)}` });
+                        await sock.sendMessage(jid, { text: `✅ בוט אישי נוצר עבור ${cmd.phone}\n\n*פרומט:*\n${cmd.prompt}` });
+                        continue;
+                    }
+                    if (cmd?.cmd === 'custom_bot_remove') {
+                        const ph = normalizePhone(cmd.phone) + '@s.whatsapp.net';
+                        if (customBots[ph]) {
+                            delete customBots[ph];
+                            await saveCustomBots();
+                            await sock.sendMessage(jid, { text: `✅ הבוט האישי של ${cmd.phone} בוטל.` });
+                        } else {
+                            await sock.sendMessage(jid, { text: `❌ אין בוט אישי למספר ${cmd.phone}` });
+                        }
+                        continue;
+                    }
+                    if (cmd?.cmd === 'custom_bot_list') {
+                        const entries = Object.entries(customBots);
+                        if (entries.length === 0) {
+                            await sock.sendMessage(jid, { text: '🤖 אין בוטים אישיים פעילים.' });
+                        } else {
+                            const lines = entries.map(([ph, b]) => `📱 *${b.phone || ph.split('@')[0]}*\n_${b.prompt.slice(0, 80)}..._`);
+                            await sock.sendMessage(jid, { text: `🤖 *בוטים אישיים פעילים (${entries.length}):*\n\n${lines.join('\n\n')}` });
+                        }
+                        continue;
+                    }
                     if (cmd?.cmd === 'customer_summary') {
                         const db = crm.getAll();
                         const found = Object.values(db).find(c =>
@@ -1422,6 +1459,34 @@ ${existingKnowledge}
                         }
                         continue;
                     }
+                }
+
+                // Custom personal bot for this contact
+                if (!isOwner && customBots[jid]) {
+                    const bot = customBots[jid];
+                    if (!conversations.has('cb_' + jid)) conversations.set('cb_' + jid, []);
+                    const cbHistory = conversations.get('cb_' + jid);
+                    cbHistory.push({ role: 'user', content: userText });
+                    if (cbHistory.length > 10) cbHistory.splice(0, cbHistory.length - 10);
+                    await sock.sendPresenceUpdate('composing', jid).catch(() => {});
+                    try {
+                        const keyIdx = nextAvailableKeyIndex();
+                        if (keyIdx !== -1) {
+                            groqKeyIndex = keyIdx;
+                            const r = await getGroqClient().chat.completions.create({
+                                model: 'llama-3.3-70b-versatile',
+                                messages: [{ role: 'system', content: bot.prompt }, ...cbHistory],
+                                max_tokens: 380, temperature: 0.7,
+                            });
+                            const reply = r.choices[0]?.message?.content?.trim() || '';
+                            if (reply) {
+                                cbHistory.push({ role: 'assistant', content: reply });
+                                await sock.sendMessage(jid, { text: reply });
+                            }
+                        }
+                    } catch (err) { console.error('custom bot error:', err.message); }
+                    await sock.sendPresenceUpdate('paused', jid).catch(() => {});
+                    continue;
                 }
 
                 // DND mode — don't respond to customers
