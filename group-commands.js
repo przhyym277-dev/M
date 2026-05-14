@@ -86,32 +86,12 @@ async function downloadFromSoundCloud(query) {
 
 async function downloadSong(query) {
     const urlMatch = query.match(/(?:v=|youtu\.be\/)([A-Za-z0-9_-]{11})/);
-    let videoId, title;
 
+    // Only use YouTube when a direct URL is given
     if (urlMatch) {
-        videoId = urlMatch[1];
-    } else {
-        console.log(`🔍 yt-dlp search: "${query}"`);
+        const videoId = urlMatch[1];
         try {
-            const search = await youtubedl(`ytsearch1:${query}`, {
-                ...YTDL_COMMON,
-                dumpSingleJson: true,
-                flatPlaylist: true,
-            });
-            const entry = search?.entries?.[0];
-            if (entry?.id) {
-                videoId = entry.id;
-                title = entry.title;
-                console.log(`✅ YT found: "${title}" (${videoId})`);
-            }
-        } catch (e) {
-            console.log(`⚠️ YT search failed: ${e.message.slice(0, 60)}`);
-        }
-    }
-
-    if (videoId) {
-        try {
-            console.log(`🎵 yt-dlp info: ${videoId}`);
+            console.log(`🎵 yt-dlp YT URL: ${videoId}`);
             const info = await youtubedl(`https://www.youtube.com/watch?v=${videoId}`, {
                 ...YTDL_COMMON,
                 dumpSingleJson: true,
@@ -120,20 +100,20 @@ async function downloadSong(query) {
             });
             if (info?.url) {
                 if ((info.duration || 0) > 660) throw new Error('השיר ארוך מדי (מקסימום 11 דקות)');
-                title = title || info.title;
                 console.log(`⬇️ YT stream (${info.ext})`);
                 const buffer = await downloadBuffer(info.url);
                 console.log(`✅ YT done: ${Math.round(buffer.length / 1024)}KB`);
                 const mimetype = info.ext === 'webm' ? 'audio/ogg' : 'audio/mp4';
-                return { buffer, title, mimetype };
+                return { buffer, title: info.title, mimetype };
             }
         } catch (e) {
-            console.log(`⚠️ YT download failed: ${e.message.slice(0, 80)} — trying SoundCloud`);
+            console.log(`⚠️ YT failed: ${e.message.slice(0, 80)} — trying SoundCloud`);
         }
+        return await downloadFromSoundCloud(query);
     }
 
-    // Fallback: SoundCloud
-    return await downloadFromSoundCloud(title || query);
+    // Search by name → SoundCloud directly (YouTube blocks cloud IPs)
+    return await downloadFromSoundCloud(query);
 }
 
 const GROQ_KEYS = [process.env.GROQ_API_KEY, process.env.GROQ_API_KEY_2, process.env.GROQ_API_KEY_3].filter(Boolean);
