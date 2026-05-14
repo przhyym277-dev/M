@@ -13,7 +13,9 @@ function getGroupText(msg) {
 async function handleGroupMessage(sock, msg) {
     const jid = msg.key.remoteJid;
     const text = getGroupText(msg).trim();
-    const senderJid = msg.key.participant || msg.participant || '';
+    const senderJid = msg.key.participant || msg.key.fromMe ? (sock.user?.id || '') : (msg.participant || '');
+
+    console.log(`👥 [קבוצה] ${jid.split('@')[0].slice(-6)} | ${msg.pushName || senderJid.split('@')[0]}: ${text || '[מדיה]'}`);
 
     if (!text && !msg.message?.audioMessage && !msg.message?.stickerMessage) return;
 

@@ -42,6 +42,7 @@ const HEBREW_DAYS = ['ראשון','שני','שלישי','רביעי','חמישי
 
 async function handleFunCommand(sock, msg, jid, text, pushName, groupParticipants) {
     const t = Date.now();
+    console.log(`🤖 [GroupCmd] "${text}"`);
     try {
 
         if (text === '!פינג') {
