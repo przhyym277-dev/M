@@ -85,6 +85,27 @@ async function handleAdminCommand(sock, msg, jid, text, senderJid, isSenderAdmin
         return true;
     }
 
+    if (text.trim() === 'הסר קבוצה') {
+        try {
+            if (!isSenderAdmin) {
+                await sock.sendMessage(jid, { text: `🚫 רק מנהלים יכולים להשתמש בפקודה זו.` });
+                return true;
+            }
+            if (!isBotAdmin) {
+                await sock.sendMessage(jid, { text: `❌ הבוט לא מנהל — לא ניתן להסיר משתתפים.` });
+                return true;
+            }
+            const targetJid = msg.message?.extendedTextMessage?.contextInfo?.participant;
+            if (!targetJid) {
+                await sock.sendMessage(jid, { text: `⚠️ יש להשתמש בפקודה כתגובה להודעה של המשתמש שרוצים להסיר.` });
+                return true;
+            }
+            await sock.groupParticipantsUpdate(jid, [targetJid], 'remove');
+            await sock.sendMessage(jid, { text: `✅ @${targetJid.split('@')[0]} הוסר מהקבוצה.`, mentions: [targetJid] });
+        } catch (e) {}
+        return true;
+    }
+
     if (text.trim() === 'מנהלי קבוצה') {
         try {
             const meta = await sock.groupMetadata(jid);

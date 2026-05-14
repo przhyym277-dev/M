@@ -6,7 +6,6 @@ const crm = require('./crm');
 const { generateQuote } = require('./quote');
 const { generateContract } = require('./contract');
 const { handleGroupMessage, handleGroupParticipantUpdate } = require('./group-bot');
-const customBotsModule = require('./custom-bots');
 const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion } = require('@whiskeysockets/baileys');
 const { Boom } = require('@hapi/boom');
 const pino = require('pino');
@@ -60,7 +59,6 @@ let projects   = loadJSON('PROJECTS_DATA');
 let incomeLog  = loadJSON('INCOME_DATA');
 let calendar   = loadJSON('CALENDAR_DATA');
 let calendarIdCounter = (calendar.length ? Math.max(...calendar.map(e => e.id)) + 1 : 1);
-// customBots state managed by custom-bots.js module
 
 // Pending meeting approval from owner: { customerJid, name, slots: [{date,time,day},...] }
 let pendingMeetingApproval = null;
@@ -220,7 +218,6 @@ async function saveEnvVar(key, value) {
 }
 
 async function saveKnowledgeToRender(knowledge) { await saveEnvVar('BUSINESS_KNOWLEDGE', knowledge); }
-async function saveCustomBots() { await customBotsModule.save(); }
 
 async function saveProjects()  { await saveEnvVar('PROJECTS_DATA',  JSON.stringify(projects)); }
 async function saveIncome()    { await saveEnvVar('INCOME_DATA',    JSON.stringify(incomeLog)); }
@@ -610,12 +607,6 @@ function parseOwnerCommand(text) {
     if (historyMatch) return { cmd: 'history', phone: historyMatch[1] };
     const statusMatch = t.match(/^סטטוס\s+([0-9]+)\s+(.+)$/);
     if (statusMatch) return { cmd: 'setstatus', phone: statusMatch[1], status: statusMatch[2].trim() };
-    // Custom bots
-    if (/^בוטים$/.test(t)) return { cmd: 'custom_bot_list' };
-    const customBotRemove = t.match(/^בטל בוט\s+([0-9]+)$/);
-    if (customBotRemove) return { cmd: 'custom_bot_remove', phone: customBotRemove[1] };
-    const customBotSet = t.match(/^בוט\s+([0-9]+)\s+([\s\S]+)/);
-    if (customBotSet) return { cmd: 'custom_bot_set', phone: customBotSet[1], prompt: customBotSet[2].trim() };
     return null;
 }
 
@@ -1397,28 +1388,6 @@ ${existingKnowledge}
                         }
                         continue;
                     }
-                    if (cmd?.cmd === 'custom_bot_set') {
-                        const ph = customBotsModule.set(cmd.phone, cmd.prompt);
-                        await saveCustomBots();
-                        await sock.sendMessage(jid, { text: `✅ בוט אישי נוצר עבור ${cmd.phone}\n\n*פרומט:*\n${cmd.prompt}` });
-                        continue;
-                    }
-                    if (cmd?.cmd === 'custom_bot_remove') {
-                        const removed = customBotsModule.remove(cmd.phone);
-                        await saveCustomBots();
-                        await sock.sendMessage(jid, { text: removed ? `✅ הבוט האישי של ${cmd.phone} בוטל.` : `❌ אין בוט אישי למספר ${cmd.phone}` });
-                        continue;
-                    }
-                    if (cmd?.cmd === 'custom_bot_list') {
-                        const entries = customBotsModule.list();
-                        if (entries.length === 0) {
-                            await sock.sendMessage(jid, { text: '🤖 אין בוטים אישיים פעילים.' });
-                        } else {
-                            const lines = entries.map(b => `📱 *${b.phone}*\n_${b.prompt.slice(0, 80)}..._`);
-                            await sock.sendMessage(jid, { text: `🤖 *בוטים אישיים פעילים (${entries.length}):*\n\n${lines.join('\n\n')}` });
-                        }
-                        continue;
-                    }
                     if (cmd?.cmd === 'customer_summary') {
                         const db = crm.getAll();
                         const found = Object.values(db).find(c =>
@@ -1453,35 +1422,6 @@ ${existingKnowledge}
                         }
                         continue;
                     }
-                }
-
-                // Custom personal bot for this contact
-                const _cbBot = customBotsModule.findByJid(jid);
-                if (!isOwner && _cbBot) {
-                    const bot = _cbBot;
-                    if (!conversations.has('cb_' + jid)) conversations.set('cb_' + jid, []);
-                    const cbHistory = conversations.get('cb_' + jid);
-                    cbHistory.push({ role: 'user', content: userText });
-                    if (cbHistory.length > 10) cbHistory.splice(0, cbHistory.length - 10);
-                    await sock.sendPresenceUpdate('composing', jid).catch(() => {});
-                    try {
-                        const keyIdx = nextAvailableKeyIndex();
-                        if (keyIdx !== -1) {
-                            groqKeyIndex = keyIdx;
-                            const r = await getGroqClient().chat.completions.create({
-                                model: 'llama-3.3-70b-versatile',
-                                messages: [{ role: 'system', content: bot.prompt }, ...cbHistory],
-                                max_tokens: 380, temperature: 0.7,
-                            });
-                            const reply = r.choices[0]?.message?.content?.trim() || '';
-                            if (reply) {
-                                cbHistory.push({ role: 'assistant', content: reply });
-                                await sock.sendMessage(jid, { text: reply });
-                            }
-                        }
-                    } catch (err) { console.error('custom bot error:', err.message); }
-                    await sock.sendPresenceUpdate('paused', jid).catch(() => {});
-                    continue;
                 }
 
                 // DND mode — don't respond to customers
