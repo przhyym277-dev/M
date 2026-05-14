@@ -4,8 +4,67 @@ require('dotenv').config();
 const Groq = require('groq-sdk');
 const QRCode = require('qrcode');
 const pino = require('pino');
-const ytdl = require('@distube/ytdl-core');
-const ytsr = require('ytsr');
+const https = require('https');
+const http  = require('http');
+
+const INVIDIOUS_INSTANCES = [
+    'inv.tux.pizza',
+    'invidious.io.lol',
+    'yt.cdaut.de',
+    'iv.datura.network',
+];
+
+function fetchJson(url) {
+    return new Promise((resolve, reject) => {
+        const mod = url.startsWith('https') ? https : http;
+        mod.get(url, { headers: { 'User-Agent': 'Mozilla/5.0' } }, res => {
+            let d = '';
+            res.on('data', c => d += c);
+            res.on('end', () => { try { resolve(JSON.parse(d)); } catch (e) { reject(e); } });
+        }).on('error', reject);
+    });
+}
+
+function downloadBuffer(url) {
+    return new Promise((resolve, reject) => {
+        const mod = url.startsWith('https') ? https : http;
+        mod.get(url, { headers: { 'User-Agent': 'Mozilla/5.0' } }, res => {
+            if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+                return downloadBuffer(res.headers.location).then(resolve).catch(reject);
+            }
+            const chunks = [];
+            res.on('data', c => chunks.push(c));
+            res.on('end', () => resolve(Buffer.concat(chunks)));
+        }).on('error', reject);
+    });
+}
+
+async function searchYouTube(query) {
+    for (const inst of INVIDIOUS_INSTANCES) {
+        try {
+            const enc = encodeURIComponent(query);
+            const results = await fetchJson(`https://${inst}/api/v1/search?q=${enc}&type=video&fields=videoId,title,lengthSeconds&hl=he`);
+            const video = results.find(r => r.videoId && r.lengthSeconds < 600);
+            if (video) return video;
+        } catch { continue; }
+    }
+    return null;
+}
+
+async function getAudioUrl(videoId) {
+    for (const inst of INVIDIOUS_INSTANCES) {
+        try {
+            const info = await fetchJson(`https://${inst}/api/v1/videos/${videoId}?fields=adaptiveFormats,title,lengthSeconds`);
+            const formats = (info.adaptiveFormats || []).filter(f => f.type?.startsWith('audio/'));
+            // prefer opus/webm (smaller) then mp4a
+            const fmt = formats.find(f => f.type.includes('opus'))
+                     || formats.find(f => f.type.includes('mp4a'))
+                     || formats[0];
+            if (fmt?.url) return { url: fmt.url, title: info.title, seconds: info.lengthSeconds };
+        } catch { continue; }
+    }
+    return null;
+}
 
 const GROQ_KEYS = [process.env.GROQ_API_KEY, process.env.GROQ_API_KEY_2, process.env.GROQ_API_KEY_3].filter(Boolean);
 let groqKeyIndex = 0;
@@ -521,43 +580,35 @@ async function handleFunCommand(sock, msg, jid, text, pushName, groupParticipant
             const query = text.slice('שיר '.length).trim();
             await sock.sendMessage(jid, { text: `🎵 מחפש: *${query}*...` });
             try {
-                let videoUrl = query;
+                let videoId = null;
                 let title = query;
 
-                // If not a URL — search YouTube
-                if (!query.includes('youtube.com') && !query.includes('youtu.be')) {
-                    const results = await ytsr(query, { limit: 5 });
-                    const video = results.items.find(i => i.type === 'video' && !i.isLive);
-                    if (!video) {
+                // Extract video ID from URL or search by name
+                const urlMatch = query.match(/(?:v=|youtu\.be\/)([A-Za-z0-9_-]{11})/);
+                if (urlMatch) {
+                    videoId = urlMatch[1];
+                } else {
+                    const found = await searchYouTube(query);
+                    if (!found) {
                         await sock.sendMessage(jid, { text: `❌ לא נמצא שיר עבור: "${query}"` });
                         return true;
                     }
-                    videoUrl = video.url;
-                    title = video.title;
-                } else {
-                    try {
-                        const info = await ytdl.getBasicInfo(videoUrl);
-                        title = info.videoDetails.title;
-                    } catch {}
+                    videoId = found.videoId;
+                    title = found.title;
                 }
 
-                await sock.sendMessage(jid, { text: `⬇️ מוריד: *${title}*` });
+                await sock.sendMessage(jid, { text: `⬇️ מוריד: *${title}*\n⏳ רגע...` });
 
-                const chunks = [];
-                await new Promise((resolve, reject) => {
-                    const stream = ytdl(videoUrl, {
-                        filter: 'audioonly',
-                        quality: 'highestaudio',
-                    });
-                    stream.on('data', chunk => chunks.push(chunk));
-                    stream.on('end', resolve);
-                    stream.on('error', reject);
-                });
+                const audio = await getAudioUrl(videoId);
+                if (!audio) {
+                    await sock.sendMessage(jid, { text: `❌ לא הצלחתי לקבל את השיר. נסה שוב.` });
+                    return true;
+                }
 
-                const buffer = Buffer.concat(chunks);
+                const buffer = await downloadBuffer(audio.url);
 
                 if (buffer.length > 15 * 1024 * 1024) {
-                    await sock.sendMessage(jid, { text: `❌ השיר גדול מדי (${Math.round(buffer.length / 1024 / 1024)}MB). מגבלה: 15MB` });
+                    await sock.sendMessage(jid, { text: `❌ השיר גדול מדי (${Math.round(buffer.length/1024/1024)}MB). מגבלה: 15MB` });
                     return true;
                 }
 
@@ -569,7 +620,7 @@ async function handleFunCommand(sock, msg, jid, text, pushName, groupParticipant
 
             } catch (err) {
                 console.error('שיר error:', err.message);
-                await sock.sendMessage(jid, { text: `❌ שגיאה בהורדה. נסה שוב או נסה שם אחר.\n_${err.message.slice(0, 80)}_` });
+                await sock.sendMessage(jid, { text: `❌ שגיאה בהורדה. נסה שוב.\n_${err.message.slice(0, 80)}_` });
             }
             return true;
         }
