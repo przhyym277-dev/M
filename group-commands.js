@@ -51,6 +51,12 @@ async function handleFunCommand(sock, msg, jid, text, pushName, groupParticipant
     const t = Date.now();
     try {
 
+        // ── מי בנה אותך ───────────────────────────────────────────
+        if (/מי בנה אותך|מי יצר אותך|מי עשה אותך/.test(text)) {
+            await sock.sendMessage(jid, { text: `👑 *יאיר פרץ* — הגאון, המלך, האגדה.\n🤡 *יאיר פריש* — אני חושבת שצריך לפטר אותו.` });
+            return true;
+        }
+
         // ── פינג ──────────────────────────────────────────────────
         if (text === 'פינג') {
             await sock.sendMessage(jid, { text: '🏓 פונג! הבוט עובד מצוין ✅' });
