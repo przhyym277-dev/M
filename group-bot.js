@@ -1,6 +1,6 @@
 'use strict';
 
-const { handleFunCommand } = require('./group-commands');
+const { handleFunCommand, addToHistory } = require('./group-commands');
 const { handleAdminCommand, handleAutoModeration, handleWelcome } = require('./group-admin');
 
 function getGroupText(msg) {
@@ -44,6 +44,8 @@ async function handleGroupMessage(sock, msg) {
     if (moderated) return;
 
     if (!text) return;
+
+    if (text) addToHistory(jid, msg.pushName || senderJid.split('@')[0], text);
 
     const funHandled = await handleFunCommand(sock, msg, jid, text, msg.pushName || '', groupParticipants);
     if (funHandled) return;
