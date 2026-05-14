@@ -54,14 +54,21 @@ async function downloadFromSoundCloud(query) {
     if (!results?.length) throw new Error('לא נמצא ב-SoundCloud');
     const track = results[0];
     if ((track.durationInSec || 0) > 660) throw new Error('השיר ארוך מדי');
-    console.log(`✅ SC found: "${track.name}" (${track.durationInSec}s)`);
+    console.log(`✅ SC found: "${track.name}" (${track.durationInSec}s) — downloading via yt-dlp`);
 
-    const stream = await playdl.stream(track.url, { quality: 0 });
-    const chunks = [];
-    for await (const chunk of stream.stream) chunks.push(chunk);
-    const buffer = Buffer.concat(chunks);
-    console.log(`✅ SC done: ${Math.round(buffer.length / 1024)}KB`);
-    return { buffer, title: track.name, mimetype: 'audio/ogg' };
+    // Use yt-dlp to download from SoundCloud URL (SC doesn't block cloud IPs)
+    const info = await youtubedl(track.url, {
+        noWarnings: true,
+        noCheckCertificates: true,
+        jsRuntimes: `node:${process.execPath}`,
+        dumpSingleJson: true,
+        format: 'bestaudio[ext=mp3]/bestaudio',
+    });
+    if (!info?.url) throw new Error('SC: לא ניתן לקבל קישור');
+    const buffer = await downloadBuffer(info.url);
+    console.log(`✅ SC done: ${Math.round(buffer.length / 1024)}KB (${info.ext})`);
+    const mimetype = info.ext === 'mp3' ? 'audio/mpeg' : 'audio/mp4';
+    return { buffer, title: track.name, mimetype };
 }
 
 async function downloadSong(query) {
