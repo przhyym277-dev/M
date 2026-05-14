@@ -7,13 +7,17 @@ const pino = require('pino');
 const https = require('https');
 const http  = require('http');
 
+const PIPED_INSTANCES = [
+    'pipedapi.kavin.rocks',
+    'api.piped.yt',
+    'piped-api.privacy.com.de',
+    'watchapi.pluto.lat',
+    'piped.projectsegfau.lt',
+];
+
 const INVIDIOUS_INSTANCES = [
     'inv.tux.pizza',
     'invidious.io.lol',
-    'yt.cdaut.de',
-    'iv.datura.network',
-    'invidious.privacydev.net',
-    'invidious.fdn.fr',
 ];
 
 function fetchJson(url, timeoutMs = 8000) {
@@ -46,30 +50,57 @@ function downloadBuffer(url, timeoutMs = 30000) {
 }
 
 async function searchYouTube(query) {
+    const enc = encodeURIComponent(query);
+
+    // Try Piped first
+    for (const inst of PIPED_INSTANCES) {
+        try {
+            console.log(`🔍 piped search via ${inst}`);
+            const data = await fetchJson(`https://${inst}/search?q=${enc}&filter=videos`);
+            const video = data.items?.find(i => i.duration > 0 && i.duration < 600 && i.url);
+            if (video) {
+                const videoId = video.url.match(/[?&]v=([^&]+)/)?.[1] || video.url.split('/').pop();
+                console.log(`✅ piped found: ${video.title}`);
+                return { videoId, title: video.title };
+            }
+        } catch (e) { console.log(`❌ piped ${inst}: ${e.message}`); }
+    }
+
+    // Fallback: Invidious
     for (const inst of INVIDIOUS_INSTANCES) {
         try {
-            const enc = encodeURIComponent(query);
-            console.log(`🔍 yt search via ${inst}`);
+            console.log(`🔍 invidious search via ${inst}`);
             const results = await fetchJson(`https://${inst}/api/v1/search?q=${enc}&type=video&fields=videoId,title,lengthSeconds`);
             const video = Array.isArray(results) && results.find(r => r.videoId && r.lengthSeconds < 600);
-            if (video) { console.log(`✅ found: ${video.title}`); return video; }
-        } catch (e) { console.log(`❌ ${inst} search: ${e.message}`); continue; }
+            if (video) { console.log(`✅ invidious found: ${video.title}`); return video; }
+        } catch (e) { console.log(`❌ invidious ${inst}: ${e.message}`); }
     }
+
     return null;
 }
 
 async function getAudioUrl(videoId) {
+    // Try Piped first
+    for (const inst of PIPED_INSTANCES) {
+        try {
+            console.log(`🎵 piped streams via ${inst}`);
+            const info = await fetchJson(`https://${inst}/streams/${videoId}`);
+            const fmt = info.audioStreams?.sort((a, b) => (b.bitrate || 0) - (a.bitrate || 0))[0];
+            if (fmt?.url) { console.log(`✅ piped audio ok`); return { url: fmt.url, title: info.title }; }
+        } catch (e) { console.log(`❌ piped ${inst}: ${e.message}`); }
+    }
+
+    // Fallback: Invidious
     for (const inst of INVIDIOUS_INSTANCES) {
         try {
-            console.log(`🎵 getting audio via ${inst}`);
-            const info = await fetchJson(`https://${inst}/api/v1/videos/${videoId}?fields=adaptiveFormats,title,lengthSeconds`);
+            console.log(`🎵 invidious audio via ${inst}`);
+            const info = await fetchJson(`https://${inst}/api/v1/videos/${videoId}?fields=adaptiveFormats,title`);
             const formats = (info.adaptiveFormats || []).filter(f => f.type?.startsWith('audio/'));
-            const fmt = formats.find(f => f.type.includes('opus'))
-                     || formats.find(f => f.type.includes('mp4a'))
-                     || formats[0];
-            if (fmt?.url) { console.log(`✅ audio url found (${fmt.type})`); return { url: fmt.url, title: info.title }; }
-        } catch (e) { console.log(`❌ ${inst} video: ${e.message}`); continue; }
+            const fmt = formats.find(f => f.type.includes('opus')) || formats.find(f => f.type.includes('mp4a')) || formats[0];
+            if (fmt?.url) { console.log(`✅ invidious audio ok`); return { url: fmt.url, title: info.title }; }
+        } catch (e) { console.log(`❌ invidious ${inst}: ${e.message}`); }
     }
+
     return null;
 }
 
