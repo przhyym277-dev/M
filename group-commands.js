@@ -28,10 +28,17 @@ function downloadBuffer(url, timeoutMs = 30000) {
     });
 }
 
+const COOKIES_FILE = path.join(os.tmpdir(), 'yt-cookies.txt');
+if (process.env.YOUTUBE_COOKIES) {
+    try { fs.writeFileSync(COOKIES_FILE, Buffer.from(process.env.YOUTUBE_COOKIES, 'base64').toString('utf8')); }
+    catch {}
+}
+
 const YTDL_COMMON = {
     noWarnings: true,
     noCheckCertificates: true,
     jsRuntimes: `node:${process.execPath}`,
+    ...(fs.existsSync(COOKIES_FILE) ? { cookies: COOKIES_FILE } : {}),
 };
 
 async function downloadSong(query) {
