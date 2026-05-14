@@ -62,9 +62,49 @@ async function handleFunCommand(sock, msg, jid, text, pushName, groupParticipant
             } catch (e) { console.error('זמן error:', e.message); return true; }
         }
 
-        if (text.startsWith('בוטי ')) {
+        if (text === '!פקודות' || text === '!עזרה' || text === '!תפריט') {
+            await sock.sendMessage(jid, { text:
+`🤖 *פקודות הבוט:*
+
+🧠 *AI*
+• \`AI [שאלה]\` — שאל את הבוט
+• \`בוטי [שאלה]\` — אותו דבר
+
+⚡ *כלים*
+• \`!פינג\` — בדוק שהבוט עובד
+• \`!זמן\` — שעה ותאריך
+• \`!חשב [תרגיל]\` — מחשבון
+• \`!גימטריה [טקסט]\` — חישוב גימטריה
+• \`!הגרלה [א, ב, ג]\` — הגרלה אקראית
+• \`!בחר [א | ב | ג]\` — בחירה אקראית
+• \`!חזור [טקסט]\` — חוזר אחריך 🦜
+• \`!ספידטסט\` — מהירות תגובה
+• \`!qr [טקסט]\` — יצירת QR
+• \`!תמלל\` — תמלול הודעה קולית (כתגובה)
+
+🎲 *כיף*
+• \`!בדיחות\` — בדיחה אקראית
+• \`!טיפ\` — טיפ יומי
+• \`!עובדה\` — עובדה מעניינת
+• \`!שידוך\` — שידוך בין חברים 💍
+• \`!תהילים\` — פרק תהילים אקראי
+• \`!סמלים\` — סמלים מיוחדים
+
+🛡️ *ניהול קבוצה (מנהלים בלבד)*
+• \`!הסרתקישורים\` / \`!בטלהסרתקישורים\`
+• \`!הסרתסטיקרים\` / \`!בטלהסרתסטיקרים\`
+• \`!אזהרות [מספר]\` — סף אזהרות להסרה
+• \`!נעל קבוצה\` / \`!פתח קבוצה\`
+• \`!מנהלי קבוצה\` — תייג מנהלים
+• \`!ברוך הבא\` — הודעת קבלת פנים
+• \`!קישור\` — קישור הזמנה לקבוצה
+• \`!ניהול\` — קידום למנהל (כתגובה)` });
+            return true;
+        }
+
+        if (text.startsWith('AI ') || text.startsWith('בוטי ')) {
             try {
-                const question = text.slice('בוטי '.length).trim();
+                const question = text.startsWith('AI ') ? text.slice(3).trim() : text.slice('בוטי '.length).trim();
                 if (!groupConversations.has(jid)) groupConversations.set(jid, []);
                 const history = groupConversations.get(jid);
                 history.push({ role: 'user', content: question });
