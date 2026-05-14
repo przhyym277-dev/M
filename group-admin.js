@@ -1,23 +1,78 @@
 'use strict';
 
+const fs = require('fs');
+const path = require('path');
+
+// Persistent storage — /data on Render (persistent disk), ./data locally
+const DATA_DIR = fs.existsSync('/data') ? '/data' : path.join(__dirname, 'data');
+const SETTINGS_FILE = path.join(DATA_DIR, 'group-settings.json');
+
 const groupSettings = new Map();
 const warnings = new Map();
 const lockedCommands = new Map();
 const groupWelcomeTemplates = new Map();
+
+function loadSettings() {
+    try {
+        if (!fs.existsSync(SETTINGS_FILE)) return;
+        const raw = JSON.parse(fs.readFileSync(SETTINGS_FILE, 'utf8'));
+        if (raw.groupSettings) {
+            for (const [gid, s] of Object.entries(raw.groupSettings))
+                groupSettings.set(gid, s);
+        }
+        if (raw.lockedCommands) {
+            for (const [gid, cmds] of Object.entries(raw.lockedCommands))
+                lockedCommands.set(gid, new Set(cmds));
+        }
+        if (raw.warnings) {
+            for (const [gid, w] of Object.entries(raw.warnings)) {
+                const m = new Map();
+                for (const [uid, n] of Object.entries(w)) m.set(uid, n);
+                warnings.set(gid, m);
+            }
+        }
+        if (raw.welcomeTemplates) {
+            for (const [gid, t] of Object.entries(raw.welcomeTemplates))
+                groupWelcomeTemplates.set(gid, t);
+        }
+        console.log(`✅ Group settings loaded (${groupSettings.size} groups)`);
+    } catch (e) {
+        console.error('Failed to load group settings:', e.message);
+    }
+}
+
+let _saveTimer = null;
+function saveSettings() {
+    clearTimeout(_saveTimer);
+    _saveTimer = setTimeout(() => {
+        try {
+            if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+            const data = {
+                groupSettings: Object.fromEntries(groupSettings),
+                lockedCommands: Object.fromEntries([...lockedCommands].map(([k, v]) => [k, [...v]])),
+                warnings: Object.fromEntries([...warnings].map(([gid, m]) => [gid, Object.fromEntries(m)])),
+                welcomeTemplates: Object.fromEntries(groupWelcomeTemplates),
+            };
+            fs.writeFileSync(SETTINGS_FILE, JSON.stringify(data, null, 2), 'utf8');
+        } catch (e) {
+            console.error('Failed to save group settings:', e.message);
+        }
+    }, 500);
+}
+
+loadSettings();
 
 const GLOBAL_SUPER_ADMINS = new Set(['972522091733', '972508181322']);
 
 const LOCKABLE_COMMANDS = ['בדיחות','טיפ','עובדה','ציטוט','טריוויה','חידה','נכון או אמת','מזל','שידוך','רולטה','ראפ','תרגם','מחמאה','עלבון','מתכון','תרגיל','מילה','שיר','סקר','הצבעה','אנונימי','תזכורת','ספירה','סיכום','מי אמר','גימטריה','הגרלה','חשב','חזור','qr','תמלל','פרופיל'];
 
 function isGlobalAdmin(senderJid) {
-    const phone = senderJid.split('@')[0];
-    return GLOBAL_SUPER_ADMINS.has(phone);
+    return GLOBAL_SUPER_ADMINS.has(senderJid.split('@')[0]);
 }
 
 function isCommandLocked(gid, cmdName) {
     const locked = lockedCommands.get(gid);
-    if (!locked) return false;
-    return locked.has(cmdName);
+    return locked ? locked.has(cmdName) : false;
 }
 
 function getSettings(gid) {
@@ -45,8 +100,8 @@ async function handleAdminCommand(sock, msg, jid, text, senderJid, isSenderAdmin
         if (!isAdmin) { await sock.sendMessage(jid, { text: `🚫 רק מנהלים יכולים להשתמש בפקודה זו.` }); return true; }
         try {
             settings.removeLinks = true;
-            const threshold = settings.warningThreshold;
-            await sock.sendMessage(jid, { text: `🔗 *הסרת קישורים פעילה!*\nקישורים יוסרו אוטומטית. אזהרה ${threshold} → הסרה מהקבוצה.` });
+            saveSettings();
+            await sock.sendMessage(jid, { text: `🔗 *הסרת קישורים פעילה!*\nקישורים יוסרו אוטומטית. אזהרה ${settings.warningThreshold} → הסרה מהקבוצה.` });
         } catch (e) {}
         return true;
     }
@@ -55,6 +110,7 @@ async function handleAdminCommand(sock, msg, jid, text, senderJid, isSenderAdmin
         if (!isAdmin) { await sock.sendMessage(jid, { text: `🚫 רק מנהלים יכולים להשתמש בפקודה זו.` }); return true; }
         try {
             settings.removeLinks = false;
+            saveSettings();
             await sock.sendMessage(jid, { text: `✅ הסרת קישורים בוטלה.` });
         } catch (e) {}
         return true;
@@ -71,10 +127,10 @@ async function handleAdminCommand(sock, msg, jid, text, senderJid, isSenderAdmin
     if (cmd === 'אזהרות') {
         if (!isAdmin) { await sock.sendMessage(jid, { text: `🚫 רק מנהלים יכולים להשתמש בפקודה זו.` }); return true; }
         try {
-            const parts = trimmed.split(' ');
-            const n = parseInt(parts[1], 10);
+            const n = parseInt(trimmed.split(' ')[1], 10);
             if (!isNaN(n) && n > 0) {
                 settings.warningThreshold = n;
+                saveSettings();
                 await sock.sendMessage(jid, { text: `📍 סף האזהרות עודכן ל-*${n}*` });
             }
         } catch (e) {}
@@ -82,11 +138,8 @@ async function handleAdminCommand(sock, msg, jid, text, senderJid, isSenderAdmin
     }
 
     if (trimmed === 'אפס אזהרות' || trimmed.startsWith('אפס אזהרות ')) {
+        if (!isAdmin) { await sock.sendMessage(jid, { text: `🚫 רק מנהלים יכולים להשתמש בפקודה זו.` }); return true; }
         try {
-            if (!isAdmin) {
-                await sock.sendMessage(jid, { text: `🚫 רק מנהלים יכולים להשתמש בפקודה זו.` });
-                return true;
-            }
             const warns = getWarnings(jid);
             const parts = trimmed.split(' ');
             let targetJid = null;
@@ -94,14 +147,13 @@ async function handleAdminCommand(sock, msg, jid, text, senderJid, isSenderAdmin
                 const phone = parts[2].replace('@', '').replace(/\D/g, '');
                 if (phone) targetJid = `${phone}@s.whatsapp.net`;
             }
-            if (!targetJid) {
-                targetJid = msg.message?.extendedTextMessage?.contextInfo?.participant || null;
-            }
+            if (!targetJid) targetJid = msg.message?.extendedTextMessage?.contextInfo?.participant || null;
             if (!targetJid) {
                 await sock.sendMessage(jid, { text: `⚠️ יש להשיב להודעה של המשתמש או לציין @מספר.` });
                 return true;
             }
             warns.set(targetJid, 0);
+            saveSettings();
             await sock.sendMessage(jid, { text: `✅ אזהרות של @${targetJid.split('@')[0]} אופסו.`, mentions: [targetJid] });
         } catch (e) {}
         return true;
@@ -125,11 +177,8 @@ async function handleAdminCommand(sock, msg, jid, text, senderJid, isSenderAdmin
     }
 
     if (trimmed.startsWith('נעל ') && !isNaN(parseInt(trimmed.split(' ')[1], 10))) {
+        if (!isAdmin) { await sock.sendMessage(jid, { text: `🚫 רק מנהלים יכולים להשתמש בפקודה זו.` }); return true; }
         try {
-            if (!isAdmin) {
-                await sock.sendMessage(jid, { text: `🚫 רק מנהלים יכולים להשתמש בפקודה זו.` });
-                return true;
-            }
             const idx = parseInt(trimmed.split(' ')[1], 10) - 1;
             if (idx < 0 || idx >= LOCKABLE_COMMANDS.length) {
                 await sock.sendMessage(jid, { text: `⚠️ מספר לא תקין.` });
@@ -137,17 +186,15 @@ async function handleAdminCommand(sock, msg, jid, text, senderJid, isSenderAdmin
             }
             const cmdName = LOCKABLE_COMMANDS[idx];
             getLockedSet(jid).add(cmdName);
+            saveSettings();
             await sock.sendMessage(jid, { text: `🔒 הפקודה *${cmdName}* נעולה.` });
         } catch (e) {}
         return true;
     }
 
     if (trimmed.startsWith('פתח ') && !isNaN(parseInt(trimmed.split(' ')[1], 10))) {
+        if (!isAdmin) { await sock.sendMessage(jid, { text: `🚫 רק מנהלים יכולים להשתמש בפקודה זו.` }); return true; }
         try {
-            if (!isAdmin) {
-                await sock.sendMessage(jid, { text: `🚫 רק מנהלים יכולים להשתמש בפקודה זו.` });
-                return true;
-            }
             const idx = parseInt(trimmed.split(' ')[1], 10) - 1;
             if (idx < 0 || idx >= LOCKABLE_COMMANDS.length) {
                 await sock.sendMessage(jid, { text: `⚠️ מספר לא תקין.` });
@@ -155,23 +202,22 @@ async function handleAdminCommand(sock, msg, jid, text, senderJid, isSenderAdmin
             }
             const cmdName = LOCKABLE_COMMANDS[idx];
             getLockedSet(jid).delete(cmdName);
+            saveSettings();
             await sock.sendMessage(jid, { text: `🔓 הפקודה *${cmdName}* פתוחה.` });
         } catch (e) {}
         return true;
     }
 
     if (trimmed.startsWith('ברוך הבא הגדר ')) {
+        if (!isAdmin) { await sock.sendMessage(jid, { text: `🚫 רק מנהלים יכולים להשתמש בפקודה זו.` }); return true; }
         try {
-            if (!isAdmin) {
-                await sock.sendMessage(jid, { text: `🚫 רק מנהלים יכולים להשתמש בפקודה זו.` });
-                return true;
-            }
             const template = trimmed.slice('ברוך הבא הגדר '.length).trim();
             if (!template) {
                 await sock.sendMessage(jid, { text: `⚠️ יש לציין תבנית הודעה. השתמש ב-{שם} כמציין מיקום.` });
                 return true;
             }
             groupWelcomeTemplates.set(jid, template);
+            saveSettings();
             await sock.sendMessage(jid, { text: `✅ תבנית ברוך הבא עודכנה:\n${template}` });
         } catch (e) {}
         return true;
@@ -181,6 +227,7 @@ async function handleAdminCommand(sock, msg, jid, text, senderJid, isSenderAdmin
         if (!isAdmin) { await sock.sendMessage(jid, { text: `🚫 רק מנהלים יכולים להשתמש בפקודה זו.` }); return true; }
         try {
             settings.removeStickerMode = true;
+            saveSettings();
             await sock.sendMessage(jid, { text: `🚫 *הסרת סטיקרים פעילה!*` });
         } catch (e) {}
         return true;
@@ -190,6 +237,7 @@ async function handleAdminCommand(sock, msg, jid, text, senderJid, isSenderAdmin
         if (!isAdmin) { await sock.sendMessage(jid, { text: `🚫 רק מנהלים יכולים להשתמש בפקודה זו.` }); return true; }
         try {
             settings.removeStickerMode = false;
+            saveSettings();
             await sock.sendMessage(jid, { text: `✅ הסרת סטיקרים בוטלה.` });
         } catch (e) {}
         return true;
@@ -199,6 +247,7 @@ async function handleAdminCommand(sock, msg, jid, text, senderJid, isSenderAdmin
         if (!isAdmin) { await sock.sendMessage(jid, { text: `🚫 רק מנהלים יכולים להשתמש בפקודה זו.` }); return true; }
         try {
             settings.stopStickerMode = true;
+            saveSettings();
             await sock.sendMessage(jid, { text: `🛑 מצב עצירת סטיקרים פעיל.` });
         } catch (e) {}
         return true;
@@ -208,17 +257,15 @@ async function handleAdminCommand(sock, msg, jid, text, senderJid, isSenderAdmin
         if (!isAdmin) { await sock.sendMessage(jid, { text: `🚫 רק מנהלים יכולים להשתמש בפקודה זו.` }); return true; }
         try {
             settings.stopStickerMode = false;
+            saveSettings();
             await sock.sendMessage(jid, { text: `✅ סטיקרים מותרים שוב.` });
         } catch (e) {}
         return true;
     }
 
     if (trimmed === 'הסר קבוצה') {
+        if (!isAdmin) { await sock.sendMessage(jid, { text: `🚫 רק מנהלים יכולים להשתמש בפקודה זו.` }); return true; }
         try {
-            if (!isAdmin) {
-                await sock.sendMessage(jid, { text: `🚫 רק מנהלים יכולים להשתמש בפקודה זו.` });
-                return true;
-            }
             if (!isBotAdmin) {
                 await sock.sendMessage(jid, { text: `❌ הבוט לא מנהל — לא ניתן להסיר משתתפים.` });
                 return true;
@@ -245,11 +292,8 @@ async function handleAdminCommand(sock, msg, jid, text, senderJid, isSenderAdmin
     }
 
     if (trimmed === 'נעל קבוצה') {
+        if (!isAdmin) { await sock.sendMessage(jid, { text: `🚫 רק מנהלים יכולים להשתמש בפקודה זו.` }); return true; }
         try {
-            if (!isAdmin) {
-                await sock.sendMessage(jid, { text: `🚫 רק מנהלים יכולים להשתמש בפקודה זו.` });
-                return true;
-            }
             await sock.groupSettingUpdate(jid, 'announcement');
             await sock.sendMessage(jid, { text: `🔐 הקבוצה נעולה — רק מנהלים יכולים לשלוח.` });
         } catch (e) {}
@@ -257,11 +301,8 @@ async function handleAdminCommand(sock, msg, jid, text, senderJid, isSenderAdmin
     }
 
     if (trimmed === 'פתח קבוצה') {
+        if (!isAdmin) { await sock.sendMessage(jid, { text: `🚫 רק מנהלים יכולים להשתמש בפקודה זו.` }); return true; }
         try {
-            if (!isAdmin) {
-                await sock.sendMessage(jid, { text: `🚫 רק מנהלים יכולים להשתמש בפקודה זו.` });
-                return true;
-            }
             await sock.groupSettingUpdate(jid, 'not_announcement');
             await sock.sendMessage(jid, { text: `🔓 הקבוצה פתוחה לכולם.` });
         } catch (e) {}
@@ -272,8 +313,8 @@ async function handleAdminCommand(sock, msg, jid, text, senderJid, isSenderAdmin
         if (!isAdmin) { await sock.sendMessage(jid, { text: `🚫 רק מנהלים יכולים להשתמש בפקודה זו.` }); return true; }
         try {
             settings.welcomeEnabled = !settings.welcomeEnabled;
-            const enabled = settings.welcomeEnabled;
-            await sock.sendMessage(jid, { text: `👋 הודעת ברוך הבא ${enabled ? 'הופעלה ✅' : 'כובתה ❌'}` });
+            saveSettings();
+            await sock.sendMessage(jid, { text: `👋 הודעת ברוך הבא ${settings.welcomeEnabled ? 'הופעלה ✅' : 'כובתה ❌'}` });
         } catch (e) {}
         return true;
     }
@@ -281,6 +322,7 @@ async function handleAdminCommand(sock, msg, jid, text, senderJid, isSenderAdmin
     if (trimmed === 'קישור מנהלים') {
         if (!isAdmin) { await sock.sendMessage(jid, { text: `🚫 רק מנהלים יכולים להשתמש בפקודה זו.` }); return true; }
         settings.linkCommandPublic = false;
+        saveSettings();
         await sock.sendMessage(jid, { text: `🔒 פקודת *קישור* זמינה למנהלים בלבד.` });
         return true;
     }
@@ -288,6 +330,7 @@ async function handleAdminCommand(sock, msg, jid, text, senderJid, isSenderAdmin
     if (trimmed === 'קישור הכל') {
         if (!isAdmin) { await sock.sendMessage(jid, { text: `🚫 רק מנהלים יכולים להשתמש בפקודה זו.` }); return true; }
         settings.linkCommandPublic = true;
+        saveSettings();
         await sock.sendMessage(jid, { text: `🔓 פקודת *קישור* זמינה לכולם.` });
         return true;
     }
@@ -305,11 +348,8 @@ async function handleAdminCommand(sock, msg, jid, text, senderJid, isSenderAdmin
     }
 
     if (trimmed === 'ניהול') {
+        if (!isAdmin) { await sock.sendMessage(jid, { text: `🚫 רק מנהלים יכולים להשתמש בפקודה זו.` }); return true; }
         try {
-            if (!isAdmin) {
-                await sock.sendMessage(jid, { text: `🚫 רק מנהלים יכולים להשתמש בפקודה זו.` });
-                return true;
-            }
             if (!isBotAdmin) {
                 await sock.sendMessage(jid, { text: `❌ הבוט לא מנהל — לא ניתן לבצע פעולה זו.` });
                 return true;
@@ -319,9 +359,8 @@ async function handleAdminCommand(sock, msg, jid, text, senderJid, isSenderAdmin
                 await sock.sendMessage(jid, { text: `⚠️ יש להשתמש בפקודה כתגובה להודעה.` });
                 return true;
             }
-            const target = targetJid.split('@')[0];
             await sock.groupParticipantsUpdate(jid, [targetJid], 'promote');
-            await sock.sendMessage(jid, { text: `✅ @${target} קודם למנהל!`, mentions: [targetJid] });
+            await sock.sendMessage(jid, { text: `✅ @${targetJid.split('@')[0]} קודם למנהל!`, mentions: [targetJid] });
         } catch (e) {}
         return true;
     }
@@ -353,8 +392,10 @@ async function handleAutoModeration(sock, msg, jid, senderJid, isBotAdmin, isSen
             const warns = getWarnings(jid);
             const count = (warns.get(senderJid) || 0) + 1;
             warns.set(senderJid, count);
+            saveSettings();
             if (count >= settings.warningThreshold) {
                 warns.delete(senderJid);
+                saveSettings();
                 await sock.groupParticipantsUpdate(jid, [senderJid], 'remove');
                 await sock.sendMessage(jid, { text: `⛔ @${senderJid.split('@')[0]} הוסר מהקבוצה לאחר ${settings.warningThreshold} אזהרות.`, mentions: [senderJid] });
             } else {
@@ -369,8 +410,10 @@ async function handleAutoModeration(sock, msg, jid, senderJid, isBotAdmin, isSen
         const warns = getWarnings(jid);
         const count = (warns.get(senderJid) || 0) + 1;
         warns.set(senderJid, count);
+        saveSettings();
         if (count >= settings.warningThreshold) {
             warns.delete(senderJid);
+            saveSettings();
             await sock.groupParticipantsUpdate(jid, [senderJid], 'remove');
             await sock.sendMessage(jid, { text: `⛔ @${senderJid.split('@')[0]} הוסר מהקבוצה לאחר ${settings.warningThreshold} אזהרות.`, mentions: [senderJid] });
         } else {
@@ -384,8 +427,10 @@ async function handleAutoModeration(sock, msg, jid, senderJid, isBotAdmin, isSen
         const warns = getWarnings(jid);
         const count = (warns.get(senderJid) || 0) + 1;
         warns.set(senderJid, count);
+        saveSettings();
         if (count >= settings.warningThreshold) {
             warns.delete(senderJid);
+            saveSettings();
             await sock.groupParticipantsUpdate(jid, [senderJid], 'remove');
             await sock.sendMessage(jid, { text: `⛔ @${senderJid.split('@')[0]} הוסר מהקבוצה לאחר ${settings.warningThreshold} אזהרות.`, mentions: [senderJid] });
         } else {
@@ -403,12 +448,9 @@ async function handleWelcome(sock, jid, participants) {
     const template = groupWelcomeTemplates.get(jid) || null;
     for (const p of participants) {
         const mention = `@${p.split('@')[0]}`;
-        let text;
-        if (template) {
-            text = template.replace(/\{שם\}/g, mention);
-        } else {
-            text = `👋 *ברוך הבא לקבוצה!* 🎉\n${mention}\nשמחים שהצטרפת! 😊`;
-        }
+        const text = template
+            ? template.replace(/\{שם\}/g, mention)
+            : `👋 *ברוך הבא לקבוצה!* 🎉\n${mention}\nשמחים שהצטרפת! 😊`;
         await sock.sendMessage(jid, { text, mentions: [p] });
     }
 }
