@@ -21,7 +21,7 @@ function isCommandLocked(gid, cmdName) {
 }
 
 function getSettings(gid) {
-    if (!groupSettings.has(gid)) groupSettings.set(gid, { removeLinks: false, removeStickerMode: false, stopStickerMode: false, welcomeEnabled: false, warningThreshold: 3, linkStats: 0 });
+    if (!groupSettings.has(gid)) groupSettings.set(gid, { removeLinks: false, removeStickerMode: false, stopStickerMode: false, welcomeEnabled: false, warningThreshold: 3, linkStats: 0, linkCommandPublic: true });
     return groupSettings.get(gid);
 }
 
@@ -42,6 +42,7 @@ async function handleAdminCommand(sock, msg, jid, text, senderJid, isSenderAdmin
     const isAdmin = isSenderAdmin || isGlobalAdmin(senderJid);
 
     if (cmd === 'הסרתקישורים') {
+        if (!isAdmin) { await sock.sendMessage(jid, { text: `🚫 רק מנהלים יכולים להשתמש בפקודה זו.` }); return true; }
         try {
             settings.removeLinks = true;
             const threshold = settings.warningThreshold;
@@ -51,6 +52,7 @@ async function handleAdminCommand(sock, msg, jid, text, senderJid, isSenderAdmin
     }
 
     if (cmd === 'בטלהסרתקישורים') {
+        if (!isAdmin) { await sock.sendMessage(jid, { text: `🚫 רק מנהלים יכולים להשתמש בפקודה זו.` }); return true; }
         try {
             settings.removeLinks = false;
             await sock.sendMessage(jid, { text: `✅ הסרת קישורים בוטלה.` });
@@ -59,6 +61,7 @@ async function handleAdminCommand(sock, msg, jid, text, senderJid, isSenderAdmin
     }
 
     if (cmd === 'קישורים') {
+        if (!isAdmin) { await sock.sendMessage(jid, { text: `🚫 רק מנהלים יכולים להשתמש בפקודה זו.` }); return true; }
         try {
             await sock.sendMessage(jid, { text: `📊 *סטטיסטיקת קישורים:*\nקישורים שהוסרו: ${settings.linkStats}\nמצב: ${settings.removeLinks ? '🔴 פעיל' : '🟢 כבוי'}` });
         } catch (e) {}
@@ -66,6 +69,7 @@ async function handleAdminCommand(sock, msg, jid, text, senderJid, isSenderAdmin
     }
 
     if (cmd === 'אזהרות') {
+        if (!isAdmin) { await sock.sendMessage(jid, { text: `🚫 רק מנהלים יכולים להשתמש בפקודה זו.` }); return true; }
         try {
             const parts = trimmed.split(' ');
             const n = parseInt(parts[1], 10);
@@ -104,10 +108,18 @@ async function handleAdminCommand(sock, msg, jid, text, senderJid, isSenderAdmin
     }
 
     if (trimmed === 'הרשאות') {
+        if (!isAdmin) { await sock.sendMessage(jid, { text: `🚫 רק מנהלים יכולים להשתמש בפקודה זו.` }); return true; }
         try {
             const locked = getLockedSet(jid);
             const lines = LOCKABLE_COMMANDS.map((c, i) => `${i + 1}. ${locked.has(c) ? '🔒' : '🔓'} ${c}`);
-            await sock.sendMessage(jid, { text: `🛡️ *פקודות ניתנות לנעילה:*\n${lines.join('\n')}\n\nכתוב *נעל [מספר]* או *פתח [מספר]* לשינוי.` });
+            const linkStatus = settings.linkCommandPublic ? '🔓 זמין לכולם' : '🔒 מנהלים בלבד';
+            await sock.sendMessage(jid, {
+                text: `🛡️ *הרשאות קבוצה*\n\n` +
+                    `📋 *פקודות כיף (נעל/פתח):*\n${lines.join('\n')}\n\n` +
+                    `⚙️ *פקודות ניהול:*\n• קישור — ${linkStatus}\n\n` +
+                    `כתוב *נעל [מספר]* / *פתח [מספר]* לנעילת פקודת כיף\n` +
+                    `כתוב *קישור מנהלים* / *קישור הכל* לשינוי הרשאת קישור`
+            });
         } catch (e) {}
         return true;
     }
@@ -166,6 +178,7 @@ async function handleAdminCommand(sock, msg, jid, text, senderJid, isSenderAdmin
     }
 
     if (cmd === 'הסרתסטיקרים') {
+        if (!isAdmin) { await sock.sendMessage(jid, { text: `🚫 רק מנהלים יכולים להשתמש בפקודה זו.` }); return true; }
         try {
             settings.removeStickerMode = true;
             await sock.sendMessage(jid, { text: `🚫 *הסרת סטיקרים פעילה!*` });
@@ -174,6 +187,7 @@ async function handleAdminCommand(sock, msg, jid, text, senderJid, isSenderAdmin
     }
 
     if (cmd === 'בטלהסרתסטיקרים') {
+        if (!isAdmin) { await sock.sendMessage(jid, { text: `🚫 רק מנהלים יכולים להשתמש בפקודה זו.` }); return true; }
         try {
             settings.removeStickerMode = false;
             await sock.sendMessage(jid, { text: `✅ הסרת סטיקרים בוטלה.` });
@@ -182,6 +196,7 @@ async function handleAdminCommand(sock, msg, jid, text, senderJid, isSenderAdmin
     }
 
     if (cmd === 'סטופסטיקר') {
+        if (!isAdmin) { await sock.sendMessage(jid, { text: `🚫 רק מנהלים יכולים להשתמש בפקודה זו.` }); return true; }
         try {
             settings.stopStickerMode = true;
             await sock.sendMessage(jid, { text: `🛑 מצב עצירת סטיקרים פעיל.` });
@@ -190,6 +205,7 @@ async function handleAdminCommand(sock, msg, jid, text, senderJid, isSenderAdmin
     }
 
     if (cmd === 'פלייסטיקר') {
+        if (!isAdmin) { await sock.sendMessage(jid, { text: `🚫 רק מנהלים יכולים להשתמש בפקודה זו.` }); return true; }
         try {
             settings.stopStickerMode = false;
             await sock.sendMessage(jid, { text: `✅ סטיקרים מותרים שוב.` });
@@ -253,6 +269,7 @@ async function handleAdminCommand(sock, msg, jid, text, senderJid, isSenderAdmin
     }
 
     if (trimmed === 'ברוך הבא') {
+        if (!isAdmin) { await sock.sendMessage(jid, { text: `🚫 רק מנהלים יכולים להשתמש בפקודה זו.` }); return true; }
         try {
             settings.welcomeEnabled = !settings.welcomeEnabled;
             const enabled = settings.welcomeEnabled;
@@ -261,7 +278,25 @@ async function handleAdminCommand(sock, msg, jid, text, senderJid, isSenderAdmin
         return true;
     }
 
+    if (trimmed === 'קישור מנהלים') {
+        if (!isAdmin) { await sock.sendMessage(jid, { text: `🚫 רק מנהלים יכולים להשתמש בפקודה זו.` }); return true; }
+        settings.linkCommandPublic = false;
+        await sock.sendMessage(jid, { text: `🔒 פקודת *קישור* זמינה למנהלים בלבד.` });
+        return true;
+    }
+
+    if (trimmed === 'קישור הכל') {
+        if (!isAdmin) { await sock.sendMessage(jid, { text: `🚫 רק מנהלים יכולים להשתמש בפקודה זו.` }); return true; }
+        settings.linkCommandPublic = true;
+        await sock.sendMessage(jid, { text: `🔓 פקודת *קישור* זמינה לכולם.` });
+        return true;
+    }
+
     if (trimmed === 'קישור') {
+        if (!settings.linkCommandPublic && !isAdmin) {
+            await sock.sendMessage(jid, { text: `🔒 פקודת קישור זמינה למנהלים בלבד.` });
+            return true;
+        }
         try {
             const inv = await sock.groupInviteCode(jid);
             await sock.sendMessage(jid, { text: `🔗 *קישור לקבוצה:*\nhttps://chat.whatsapp.com/${inv}` });
