@@ -10,6 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const youtubedl = require('youtube-dl-exec');
+const playdl = require('play-dl');
 const { isCommandLocked } = require('./group-admin');
 
 function downloadBuffer(url, timeoutMs = 30000) {
@@ -28,6 +29,11 @@ function downloadBuffer(url, timeoutMs = 30000) {
     });
 }
 
+// Init SoundCloud client ID once on startup
+playdl.getFreeClientID()
+    .then(id => playdl.setToken({ soundcloud: { client_id: id } }))
+    .catch(() => {});
+
 const COOKIES_FILE = path.join(os.tmpdir(), 'yt-cookies.txt');
 if (process.env.YOUTUBE_COOKIES) {
     try { fs.writeFileSync(COOKIES_FILE, Buffer.from(process.env.YOUTUBE_COOKIES, 'base64').toString('utf8')); }
@@ -42,6 +48,22 @@ const YTDL_COMMON = {
     ...(fs.existsSync(COOKIES_FILE) ? { cookies: COOKIES_FILE } : {}),
 };
 
+async function downloadFromSoundCloud(query) {
+    console.log(`🎵 SoundCloud search: "${query}"`);
+    const results = await playdl.search(query, { source: { soundcloud: 'tracks' }, limit: 1 });
+    if (!results?.length) throw new Error('לא נמצא ב-SoundCloud');
+    const track = results[0];
+    if ((track.durationInSec || 0) > 660) throw new Error('השיר ארוך מדי');
+    console.log(`✅ SC found: "${track.name}" (${track.durationInSec}s)`);
+
+    const stream = await playdl.stream(track.url, { quality: 0 });
+    const chunks = [];
+    for await (const chunk of stream.stream) chunks.push(chunk);
+    const buffer = Buffer.concat(chunks);
+    console.log(`✅ SC done: ${Math.round(buffer.length / 1024)}KB`);
+    return { buffer, title: track.name, mimetype: 'audio/ogg' };
+}
+
 async function downloadSong(query) {
     const urlMatch = query.match(/(?:v=|youtu\.be\/)([A-Za-z0-9_-]{11})/);
     let videoId, title;
@@ -49,39 +71,49 @@ async function downloadSong(query) {
     if (urlMatch) {
         videoId = urlMatch[1];
     } else {
-        // Search: flat-playlist gives us the id without fetching all format data
         console.log(`🔍 yt-dlp search: "${query}"`);
-        const search = await youtubedl(`ytsearch1:${query}`, {
-            ...YTDL_COMMON,
-            dumpSingleJson: true,
-            flatPlaylist: true,
-        });
-        const entry = search?.entries?.[0];
-        if (!entry?.id) throw new Error('לא נמצא שיר');
-        videoId = entry.id;
-        title = entry.title;
-        console.log(`✅ found: "${title}" (${videoId})`);
+        try {
+            const search = await youtubedl(`ytsearch1:${query}`, {
+                ...YTDL_COMMON,
+                dumpSingleJson: true,
+                flatPlaylist: true,
+            });
+            const entry = search?.entries?.[0];
+            if (entry?.id) {
+                videoId = entry.id;
+                title = entry.title;
+                console.log(`✅ YT found: "${title}" (${videoId})`);
+            }
+        } catch (e) {
+            console.log(`⚠️ YT search failed: ${e.message.slice(0, 60)}`);
+        }
     }
 
-    // Get direct audio stream URL — no ffmpeg needed
-    console.log(`🎵 yt-dlp info: ${videoId}`);
-    const info = await youtubedl(`https://www.youtube.com/watch?v=${videoId}`, {
-        ...YTDL_COMMON,
-        dumpSingleJson: true,
-        format: 'bestaudio[ext=m4a]/bestaudio[ext=webm]/bestaudio',
-        noPlaylist: true,
-    });
+    if (videoId) {
+        try {
+            console.log(`🎵 yt-dlp info: ${videoId}`);
+            const info = await youtubedl(`https://www.youtube.com/watch?v=${videoId}`, {
+                ...YTDL_COMMON,
+                dumpSingleJson: true,
+                format: 'bestaudio[ext=m4a]/bestaudio[ext=webm]/bestaudio',
+                noPlaylist: true,
+            });
+            if (info?.url) {
+                if ((info.duration || 0) > 660) throw new Error('השיר ארוך מדי (מקסימום 11 דקות)');
+                title = title || info.title;
+                console.log(`⬇️ YT stream (${info.ext})`);
+                const buffer = await downloadBuffer(info.url);
+                console.log(`✅ YT done: ${Math.round(buffer.length / 1024)}KB`);
+                const mimetype = info.ext === 'webm' ? 'audio/ogg' : 'audio/mp4';
+                return { buffer, title, mimetype };
+            }
+        } catch (e) {
+            console.log(`⚠️ YT download failed: ${e.message.slice(0, 80)} — trying SoundCloud`);
+        }
+    }
 
-    if (!info?.url) throw new Error('לא ניתן לקבל קישור אודיו');
-    if ((info.duration || 0) > 660) throw new Error('השיר ארוך מדי (מקסימום 11 דקות)');
-    title = title || info.title;
-
-    console.log(`⬇️ downloading stream (${info.ext})`);
-    const buffer = await downloadBuffer(info.url);
-    console.log(`✅ done: ${Math.round(buffer.length / 1024)}KB`);
-
-    const mimetype = info.ext === 'webm' ? 'audio/ogg' : 'audio/mp4';
-    return { buffer, title, mimetype };
+    // Fallback: SoundCloud
+    return await downloadFromSoundCloud(title || query);
 }
 
 const GROQ_KEYS = [process.env.GROQ_API_KEY, process.env.GROQ_API_KEY_2, process.env.GROQ_API_KEY_3].filter(Boolean);
