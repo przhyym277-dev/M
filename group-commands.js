@@ -60,28 +60,45 @@ function cleanQuery(q) {
         .slice(0, 80);
 }
 
+const SC_COMMON = {
+    noWarnings: true,
+    noCheckCertificates: true,
+    jsRuntimes: `node:${process.execPath}`,
+    dumpSingleJson: true,
+    format: 'bestaudio[ext=mp3]/bestaudio',
+};
+
+async function tryScSearch(q) {
+    console.log(`🔍 scsearch: "${q}"`);
+    const data = await youtubedl(`scsearch1:${q}`, {
+        ...SC_COMMON,
+        flatPlaylist: true,
+    });
+    return data?.entries?.[0] || (data?.id ? data : null);
+}
+
 async function downloadFromSoundCloud(query) {
     const cleaned = cleanQuery(query);
-    console.log(`🎵 SoundCloud search: "${cleaned}"`);
-    const results = await playdl.search(cleaned, { source: { soundcloud: 'tracks' }, limit: 1 });
-    if (!results?.length) throw new Error('לא נמצא ב-SoundCloud');
-    const track = results[0];
-    if ((track.durationInSec || 0) > 660) throw new Error('השיר ארוך מדי');
-    console.log(`✅ SC found: "${track.name}" (${track.durationInSec}s) — downloading via yt-dlp`);
 
-    // Use yt-dlp to download from SoundCloud URL (SC doesn't block cloud IPs)
-    const info = await youtubedl(track.url, {
-        noWarnings: true,
-        noCheckCertificates: true,
-        jsRuntimes: `node:${process.execPath}`,
-        dumpSingleJson: true,
-        format: 'bestaudio[ext=mp3]/bestaudio',
-    });
+    // Try multiple query variants: cleaned → original → first 2 words
+    const variants = [cleaned, query, cleaned.split(' ').slice(0, 3).join(' ')].filter((v, i, a) => v && a.indexOf(v) === i);
+    let entry = null;
+    for (const q of variants) {
+        try { entry = await tryScSearch(q); } catch {}
+        if (entry) break;
+    }
+    if (!entry) throw new Error(`לא נמצא ב-SoundCloud: "${cleaned}"`);
+
+    const trackUrl = entry.url || entry.webpage_url;
+    console.log(`✅ SC found: "${entry.title}" — downloading`);
+
+    const info = await youtubedl(trackUrl, SC_COMMON);
     if (!info?.url) throw new Error('SC: לא ניתן לקבל קישור');
+    if ((info.duration || 0) > 660) throw new Error('השיר ארוך מדי');
     const buffer = await downloadBuffer(info.url);
     console.log(`✅ SC done: ${Math.round(buffer.length / 1024)}KB (${info.ext})`);
     const mimetype = info.ext === 'mp3' ? 'audio/mpeg' : 'audio/mp4';
-    return { buffer, title: track.name, mimetype };
+    return { buffer, title: info.title, mimetype };
 }
 
 async function downloadSong(query) {
@@ -112,8 +129,38 @@ async function downloadSong(query) {
         return await downloadFromSoundCloud(query);
     }
 
-    // Search by name → SoundCloud directly (YouTube blocks cloud IPs)
-    return await downloadFromSoundCloud(query);
+    // Search by name → SoundCloud first, YouTube as last resort
+    try {
+        return await downloadFromSoundCloud(query);
+    } catch (scErr) {
+        if (!scErr.message.includes('לא נמצא')) throw scErr;
+        console.log(`⚠️ SC not found — trying YouTube: "${query}"`);
+    }
+
+    // Last resort: YouTube search + download
+    try {
+        const search = await youtubedl(`ytsearch1:${query}`, {
+            ...YTDL_COMMON,
+            dumpSingleJson: true,
+            flatPlaylist: true,
+        });
+        const entry = search?.entries?.[0];
+        if (!entry?.id) throw new Error('לא נמצא ב-YouTube');
+        console.log(`✅ YT found: "${entry.title}" — attempting download`);
+        const info = await youtubedl(`https://www.youtube.com/watch?v=${entry.id}`, {
+            ...YTDL_COMMON,
+            dumpSingleJson: true,
+            format: 'bestaudio[ext=m4a]/bestaudio[ext=webm]/bestaudio',
+            noPlaylist: true,
+        });
+        if (!info?.url) throw new Error('YT: לא ניתן לקבל קישור');
+        if ((info.duration || 0) > 660) throw new Error('השיר ארוך מדי');
+        const buffer = await downloadBuffer(info.url);
+        const mimetype = info.ext === 'webm' ? 'audio/ogg' : 'audio/mp4';
+        return { buffer, title: info.title, mimetype };
+    } catch (ytErr) {
+        throw new Error(`לא נמצא השיר לא ב-SoundCloud ולא ב-YouTube`);
+    }
 }
 
 const GROQ_KEYS = [process.env.GROQ_API_KEY, process.env.GROQ_API_KEY_2, process.env.GROQ_API_KEY_3].filter(Boolean);
