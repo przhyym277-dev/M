@@ -4,6 +4,8 @@ require('dotenv').config();
 const Groq = require('groq-sdk');
 const QRCode = require('qrcode');
 const pino = require('pino');
+const ytdl = require('@distube/ytdl-core');
+const ytsr = require('ytsr');
 
 const GROQ_KEYS = [process.env.GROQ_API_KEY, process.env.GROQ_API_KEY_2, process.env.GROQ_API_KEY_3].filter(Boolean);
 let groqKeyIndex = 0;
@@ -102,6 +104,7 @@ async function handleFunCommand(sock, msg, jid, text, pushName, groupParticipant
 • \`הגרלה [א, ב, ג]\` • \`בחר [א | ב]\`
 • \`חזור [טקסט]\` 🦜 • \`qr [טקסט]\`
 • \`תמלל\` (כתגובה להקלטה)
+• \`שיר [שם / URL]\` — הורדת שיר מיוטיוב 🎵
 
 📊 *קבוצה*
 • \`סקר [שאלה]\` — סקר כן/לא/אולי
@@ -510,6 +513,64 @@ async function handleFunCommand(sock, msg, jid, text, pushName, groupParticipant
             const counter = groupCounters.get(jid);
             if (!counter) { await sock.sendMessage(jid, { text: '⚠️ אין ספירה פעילה. כתוב: ספירה [נושא]' }); }
             else { counter.count++; await sock.sendMessage(jid, { text: `📊 *${counter.topic}:* ${counter.count}` }); }
+            return true;
+        }
+
+        // ── שיר ───────────────────────────────────────────────────
+        if (text.startsWith('שיר ')) {
+            const query = text.slice('שיר '.length).trim();
+            await sock.sendMessage(jid, { text: `🎵 מחפש: *${query}*...` });
+            try {
+                let videoUrl = query;
+                let title = query;
+
+                // If not a URL — search YouTube
+                if (!query.includes('youtube.com') && !query.includes('youtu.be')) {
+                    const results = await ytsr(query, { limit: 5 });
+                    const video = results.items.find(i => i.type === 'video' && !i.isLive);
+                    if (!video) {
+                        await sock.sendMessage(jid, { text: `❌ לא נמצא שיר עבור: "${query}"` });
+                        return true;
+                    }
+                    videoUrl = video.url;
+                    title = video.title;
+                } else {
+                    try {
+                        const info = await ytdl.getBasicInfo(videoUrl);
+                        title = info.videoDetails.title;
+                    } catch {}
+                }
+
+                await sock.sendMessage(jid, { text: `⬇️ מוריד: *${title}*` });
+
+                const chunks = [];
+                await new Promise((resolve, reject) => {
+                    const stream = ytdl(videoUrl, {
+                        filter: 'audioonly',
+                        quality: 'highestaudio',
+                    });
+                    stream.on('data', chunk => chunks.push(chunk));
+                    stream.on('end', resolve);
+                    stream.on('error', reject);
+                });
+
+                const buffer = Buffer.concat(chunks);
+
+                if (buffer.length > 15 * 1024 * 1024) {
+                    await sock.sendMessage(jid, { text: `❌ השיר גדול מדי (${Math.round(buffer.length / 1024 / 1024)}MB). מגבלה: 15MB` });
+                    return true;
+                }
+
+                await sock.sendMessage(jid, {
+                    audio: buffer,
+                    mimetype: 'audio/mp4',
+                    ptt: false,
+                }, { quoted: msg });
+
+            } catch (err) {
+                console.error('שיר error:', err.message);
+                await sock.sendMessage(jid, { text: `❌ שגיאה בהורדה. נסה שוב או נסה שם אחר.\n_${err.message.slice(0, 80)}_` });
+            }
             return true;
         }
 

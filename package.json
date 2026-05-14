@@ -12,6 +12,7 @@
   "license": "ISC",
   "type": "commonjs",
   "dependencies": {
+    "@distube/ytdl-core": "^4.16.12",
     "@fontsource/heebo": "^5.2.8",
     "@google/generative-ai": "^0.24.1",
     "@whiskeysockets/baileys": "^7.0.0-rc10",
@@ -19,6 +20,7 @@
     "groq-sdk": "^1.1.2",
     "pdfkit": "^0.15.0",
     "pino": "^10.3.1",
-    "qrcode": "^1.5.4"
+    "qrcode": "^1.5.4",
+    "ytsr": "^3.8.4"
   }
 }
