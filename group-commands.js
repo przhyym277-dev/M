@@ -12,30 +12,36 @@ const INVIDIOUS_INSTANCES = [
     'invidious.io.lol',
     'yt.cdaut.de',
     'iv.datura.network',
+    'invidious.privacydev.net',
+    'invidious.fdn.fr',
 ];
 
-function fetchJson(url) {
+function fetchJson(url, timeoutMs = 8000) {
     return new Promise((resolve, reject) => {
         const mod = url.startsWith('https') ? https : http;
-        mod.get(url, { headers: { 'User-Agent': 'Mozilla/5.0' } }, res => {
+        const req = mod.get(url, { headers: { 'User-Agent': 'Mozilla/5.0' }, timeout: timeoutMs }, res => {
             let d = '';
             res.on('data', c => d += c);
-            res.on('end', () => { try { resolve(JSON.parse(d)); } catch (e) { reject(e); } });
-        }).on('error', reject);
+            res.on('end', () => { try { resolve(JSON.parse(d)); } catch (e) { reject(new Error('bad json')); } });
+        });
+        req.on('error', reject);
+        req.on('timeout', () => { req.destroy(); reject(new Error('timeout')); });
     });
 }
 
-function downloadBuffer(url) {
+function downloadBuffer(url, timeoutMs = 30000) {
     return new Promise((resolve, reject) => {
         const mod = url.startsWith('https') ? https : http;
-        mod.get(url, { headers: { 'User-Agent': 'Mozilla/5.0' } }, res => {
+        const req = mod.get(url, { headers: { 'User-Agent': 'Mozilla/5.0' }, timeout: timeoutMs }, res => {
             if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-                return downloadBuffer(res.headers.location).then(resolve).catch(reject);
+                return downloadBuffer(res.headers.location, timeoutMs).then(resolve).catch(reject);
             }
             const chunks = [];
             res.on('data', c => chunks.push(c));
             res.on('end', () => resolve(Buffer.concat(chunks)));
-        }).on('error', reject);
+        });
+        req.on('error', reject);
+        req.on('timeout', () => { req.destroy(); reject(new Error('download timeout')); });
     });
 }
 
@@ -43,10 +49,11 @@ async function searchYouTube(query) {
     for (const inst of INVIDIOUS_INSTANCES) {
         try {
             const enc = encodeURIComponent(query);
-            const results = await fetchJson(`https://${inst}/api/v1/search?q=${enc}&type=video&fields=videoId,title,lengthSeconds&hl=he`);
-            const video = results.find(r => r.videoId && r.lengthSeconds < 600);
-            if (video) return video;
-        } catch { continue; }
+            console.log(`🔍 yt search via ${inst}`);
+            const results = await fetchJson(`https://${inst}/api/v1/search?q=${enc}&type=video&fields=videoId,title,lengthSeconds`);
+            const video = Array.isArray(results) && results.find(r => r.videoId && r.lengthSeconds < 600);
+            if (video) { console.log(`✅ found: ${video.title}`); return video; }
+        } catch (e) { console.log(`❌ ${inst} search: ${e.message}`); continue; }
     }
     return null;
 }
@@ -54,14 +61,14 @@ async function searchYouTube(query) {
 async function getAudioUrl(videoId) {
     for (const inst of INVIDIOUS_INSTANCES) {
         try {
+            console.log(`🎵 getting audio via ${inst}`);
             const info = await fetchJson(`https://${inst}/api/v1/videos/${videoId}?fields=adaptiveFormats,title,lengthSeconds`);
             const formats = (info.adaptiveFormats || []).filter(f => f.type?.startsWith('audio/'));
-            // prefer opus/webm (smaller) then mp4a
             const fmt = formats.find(f => f.type.includes('opus'))
                      || formats.find(f => f.type.includes('mp4a'))
                      || formats[0];
-            if (fmt?.url) return { url: fmt.url, title: info.title, seconds: info.lengthSeconds };
-        } catch { continue; }
+            if (fmt?.url) { console.log(`✅ audio url found (${fmt.type})`); return { url: fmt.url, title: info.title }; }
+        } catch (e) { console.log(`❌ ${inst} video: ${e.message}`); continue; }
     }
     return null;
 }
