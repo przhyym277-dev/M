@@ -26,8 +26,9 @@ async function askGroq(system, user, maxTokens = 300) {
 }
 
 const groupConversations = new Map();
-const groupHistory = new Map();   // jid -> [{sender, text}]
-const groupCounters = new Map();  // jid -> {topic, count}
+const groupHistory    = new Map();  // jid -> [{sender, text}]
+const groupCounters   = new Map();  // jid -> {topic, count}
+const groupLists      = new Map();  // jid -> string[]
 
 function addToHistory(jid, sender, text) {
     if (!groupHistory.has(jid)) groupHistory.set(jid, []);
@@ -42,12 +43,7 @@ const GEMATRIA_MAP = {
     'ס':60,'ע':70,'פ':80,'ף':80,'צ':90,'ץ':90,
     'ק':100,'ר':200,'ש':300,'ת':400,
 };
-
-function calcGematria(text) {
-    let val = 0;
-    for (const ch of text) { if (GEMATRIA_MAP[ch]) val += GEMATRIA_MAP[ch]; }
-    return val;
-}
+function calcGematria(t) { let v=0; for (const c of t) if (GEMATRIA_MAP[c]) v+=GEMATRIA_MAP[c]; return v; }
 
 const HEBREW_DAYS = ['ראשון','שני','שלישי','רביעי','חמישי','שישי','שבת'];
 
@@ -78,35 +74,39 @@ async function handleFunCommand(sock, msg, jid, text, pushName, groupParticipant
 
 🧠 *AI*
 • \`AI [שאלה]\` / \`בוטי [שאלה]\`
-• \`ראפ [נושא]\` — ראפ מאולתר
-• \`תרגם [טקסט]\` — תרגום לאנגלית
-• \`מי אמר [ציטוט]\` — מי בקבוצה היה אומר
+• \`ראפ [נושא]\` • \`תרגם [טקסט]\`
+• \`מחמאה [שם]\` • \`עלבון [שם]\`
+• \`מי אמר [ציטוט]\` • \`סיכום\`
 
 🎲 *כיף*
 • \`בדיחות\` • \`טיפ\` • \`עובדה\`
-• \`נכון או אמת\` — שאלה למשחק
-• \`ציטוט\` — ציטוט השראה
-• \`טריוויה\` — שאלת טריוויה
-• \`שידוך\` — שידוך בין חברים 💍
+• \`ציטוט\` • \`טריוויה\` • \`חידה\`
+• \`נכון או אמת\` • \`מזל [מזל]\`
+• \`שידוך\` • \`רולטה\`
 • \`תהילים\` • \`סמלים\`
+
+📚 *ידע*
+• \`מתכון [מנה]\` — מתכון מלא
+• \`תרגיל [שריר]\` — תרגיל כושר
+• \`מילה [מילה]\` — הגדרה + דוגמה
 
 ⚡ *כלים*
 • \`פינג\` • \`זמן\` • \`ספידטסט\`
-• \`חשב [תרגיל]\` — מחשבון
-• \`גימטריה [טקסט]\`
-• \`הגרלה [א, ב, ג]\`
-• \`בחר [א | ב | ג]\`
-• \`חזור [טקסט]\` 🦜
-• \`qr [טקסט]\` — יצירת QR
-• \`תמלל\` — תמלול הקלטה (כתגובה)
+• \`חשב [תרגיל]\` • \`גימטריה [טקסט]\`
+• \`הגרלה [א, ב, ג]\` • \`בחר [א | ב]\`
+• \`חזור [טקסט]\` 🦜 • \`qr [טקסט]\`
+• \`תמלל\` (כתגובה להקלטה)
 
 📊 *קבוצה*
-• \`סקר [שאלה]\` — סקר כן/לא
+• \`סקר [שאלה]\` — סקר כן/לא/אולי
+• \`הצבעה [שאלה] | [א] | [ב] | [ג]\`
+• \`אנונימי [הודעה]\` — שלח בסתר
 • \`תזכורת [X שעות/דקות] [הודעה]\`
-• \`ספירה [נושא]\` — פותח ספירה
-• \`++\` — מוסיף לספירה
-• \`ספירה?\` — מציג ספירה נוכחית
-• \`סיכום\` — סיכום AI של השיחה
+• \`רשימה + [פריט]\` — הוסף לרשימה
+• \`רשימה - [מספר]\` — הסר מרשימה
+• \`רשימה?\` — הצג רשימה
+• \`רשימה נקה\` — נקה הכל
+• \`ספירה [נושא]\` / \`++\` / \`ספירה?\`
 
 🛡️ *ניהול (מנהלים בלבד)*
 • \`הסרתקישורים\` / \`בטלהסרתקישורים\`
@@ -130,10 +130,7 @@ async function handleFunCommand(sock, msg, jid, text, pushName, groupParticipant
                 try {
                     const r = await getGroqClient().chat.completions.create({
                         model: 'llama-3.3-70b-versatile',
-                        messages: [
-                            { role: 'system', content: 'אתה בוט חברים חכם ומצחיק. עברית, קצר, אמוג\'י.' },
-                            ...history,
-                        ],
+                        messages: [{ role: 'system', content: 'אתה בוט חברים חכם ומצחיק. עברית, קצר, אמוג\'י.' }, ...history],
                         max_tokens: 300, temperature: 0.8,
                     });
                     reply = r.choices[0]?.message?.content?.trim() || null;
@@ -154,33 +151,24 @@ async function handleFunCommand(sock, msg, jid, text, pushName, groupParticipant
         // ── גימטריה ───────────────────────────────────────────────
         if (text.startsWith('גימטריה ')) {
             const input = text.slice('גימטריה '.length).trim();
-            const value = calcGematria(input);
-            await sock.sendMessage(jid, { text: `🔢 *גימטריה ל"${input}":* ${value}` });
+            await sock.sendMessage(jid, { text: `🔢 *גימטריה ל"${input}":* ${calcGematria(input)}` });
             return true;
         }
 
         // ── הגרלה ─────────────────────────────────────────────────
         if (text.startsWith('הגרלה ')) {
             const input = text.slice('הגרלה '.length).trim();
-            const items = input.includes(',')
-                ? input.split(',').map(s => s.trim()).filter(Boolean)
-                : input.split(/\s+/).filter(Boolean);
-            if (items.length < 2) {
-                await sock.sendMessage(jid, { text: '⚠️ הכנס לפחות 2 אפשרויות' });
-                return true;
-            }
+            const items = input.includes(',') ? input.split(',').map(s=>s.trim()).filter(Boolean) : input.split(/\s+/).filter(Boolean);
+            if (items.length < 2) { await sock.sendMessage(jid, { text: '⚠️ הכנס לפחות 2 אפשרויות' }); return true; }
             const chosen = items[Math.floor(Math.random() * items.length)];
-            await sock.sendMessage(jid, { text: `🎲 *ההגרלה בחרה:* ${chosen} (מתוך ${items.length} אפשרויות)` });
+            await sock.sendMessage(jid, { text: `🎲 *ההגרלה בחרה:* ${chosen} (מתוך ${items.length})` });
             return true;
         }
 
         // ── חשב ───────────────────────────────────────────────────
         if (text.startsWith('חשב ')) {
             const expr = text.slice('חשב '.length).trim();
-            if (!/^[0-9+\-*/().\s%]+$/.test(expr)) {
-                await sock.sendMessage(jid, { text: '❌ ביטוי לא חוקי' });
-                return true;
-            }
+            if (!/^[0-9+\-*/().\s%]+$/.test(expr)) { await sock.sendMessage(jid, { text: '❌ ביטוי לא חוקי' }); return true; }
             let result;
             try { result = Function('"use strict";return(' + expr + ')')(); }
             catch { await sock.sendMessage(jid, { text: '❌ שגיאה בחישוב' }); return true; }
@@ -224,31 +212,19 @@ async function handleFunCommand(sock, msg, jid, text, pushName, groupParticipant
         // ── בחר ───────────────────────────────────────────────────
         if (text.startsWith('בחר ')) {
             const input = text.slice('בחר '.length).trim();
-            const items = input.includes(' | ')
-                ? input.split(' | ').map(s => s.trim()).filter(Boolean)
-                : input.split(',').map(s => s.trim()).filter(Boolean);
-            if (items.length < 2) {
-                await sock.sendMessage(jid, { text: '⚠️ הכנס לפחות 2 אפשרויות מופרדות ב-| או פסיק' });
-                return true;
-            }
-            const choice = items[Math.floor(Math.random() * items.length)];
-            await sock.sendMessage(jid, { text: `🎯 בחרתי: *${choice}*` });
+            const items = input.includes(' | ') ? input.split(' | ').map(s=>s.trim()).filter(Boolean) : input.split(',').map(s=>s.trim()).filter(Boolean);
+            if (items.length < 2) { await sock.sendMessage(jid, { text: '⚠️ הפרד ב-| או פסיק' }); return true; }
+            await sock.sendMessage(jid, { text: `🎯 בחרתי: *${items[Math.floor(Math.random() * items.length)]}*` });
             return true;
         }
 
         // ── שידוך ─────────────────────────────────────────────────
         if (text === 'שידוך') {
-            if (!groupParticipants || groupParticipants.length < 2) {
-                await sock.sendMessage(jid, { text: '⚠️ אין מספיק משתתפים' });
-                return true;
-            }
+            if (!groupParticipants || groupParticipants.length < 2) { await sock.sendMessage(jid, { text: '⚠️ אין מספיק משתתפים' }); return true; }
             const pool = [...groupParticipants].sort(() => Math.random() - 0.5);
             const p1 = pool[0]; const p2 = pool[1];
             const funny = await askGroq('קבוצת ווטסאפ', 'משפט מצחיק אחד על זוג חדש') || '💕';
-            await sock.sendMessage(jid, {
-                text: `💍 *שידוך!*\n@${p1.split('@')[0]} + @${p2.split('@')[0]}\n${funny}`,
-                mentions: [p1, p2],
-            });
+            await sock.sendMessage(jid, { text: `💍 *שידוך!*\n@${p1.split('@')[0]} + @${p2.split('@')[0]}\n${funny}`, mentions: [p1, p2] });
             return true;
         }
 
@@ -263,22 +239,15 @@ async function handleFunCommand(sock, msg, jid, text, pushName, groupParticipant
         // ── תמלל ──────────────────────────────────────────────────
         if (text === 'תמלל') {
             const quoted = msg.message?.extendedTextMessage?.contextInfo?.quotedMessage?.audioMessage;
-            if (!quoted) {
-                await sock.sendMessage(jid, { text: '⚠️ ענה על הודעת קול כדי לתמלל' });
-                return true;
-            }
+            if (!quoted) { await sock.sendMessage(jid, { text: '⚠️ ענה על הודעת קול כדי לתמלל' }); return true; }
             const { downloadMediaMessage } = require('@whiskeysockets/baileys');
             const { toFile } = require('groq-sdk');
             const quotedMsg = {
                 key: { remoteJid: jid, id: msg.message.extendedTextMessage.contextInfo.stanzaId, fromMe: false },
                 message: msg.message.extendedTextMessage.contextInfo.quotedMessage,
             };
-            const buffer = await downloadMediaMessage(quotedMsg, 'buffer', {},
-                { logger: pino({ level: 'silent' }), reuploadRequest: sock.updateMediaMessage });
-            const result = await getGroqClient().audio.transcriptions.create({
-                file: await toFile(buffer, 'voice.ogg', { type: 'audio/ogg' }),
-                model: 'whisper-large-v3-turbo', language: 'he',
-            });
+            const buffer = await downloadMediaMessage(quotedMsg, 'buffer', {}, { logger: pino({ level: 'silent' }), reuploadRequest: sock.updateMediaMessage });
+            const result = await getGroqClient().audio.transcriptions.create({ file: await toFile(buffer, 'voice.ogg', { type: 'audio/ogg' }), model: 'whisper-large-v3-turbo', language: 'he' });
             await sock.sendMessage(jid, { text: `📑 *תמלול:*\n"${result.text}"` });
             return true;
         }
@@ -292,50 +261,46 @@ async function handleFunCommand(sock, msg, jid, text, pushName, groupParticipant
         // ── תהילים ────────────────────────────────────────────────
         if (text === 'תהילים') {
             const n = Math.floor(Math.random() * 150) + 1;
-            const psalm = await askGroq('אתה מכיר תהילים בעל פה. כתוב את הפרק המבוקש.', `תהילים פרק ${n}`, 600);
+            const psalm = await askGroq('אתה מכיר תהילים בעל פה.', `תהילים פרק ${n}`, 600);
             if (psalm) await sock.sendMessage(jid, { text: `📖 *תהילים פרק ${n}:*\n${psalm}` });
             return true;
         }
 
         // ── נכון או אמת ───────────────────────────────────────────
         if (text === 'נכון או אמת') {
-            const q = await askGroq(
-                'אתה מנחה משחקי מסיבה. צור שאלת "נכון או אמת" מצחיקה ומעניינת בעברית לקבוצת חברים. שאלה אחת בלבד.',
-                'שאלת נכון או אמת'
-            );
+            const q = await askGroq('מנחה משחקי מסיבה. שאלת "נכון או אמת" מצחיקה לקבוצת חברים, שאלה אחת בלבד.', 'שאלה');
             if (q) await sock.sendMessage(jid, { text: `🔥 *נכון או אמת?*\n\n${q}` });
             return true;
         }
 
         // ── ציטוט ─────────────────────────────────────────────────
         if (text === 'ציטוט') {
-            const quote = await askGroq(
-                'אתה אוסף ציטוטים. תן ציטוט השראה מפורסם בעברית. בצורה: "הציטוט" — השם.',
-                'ציטוט השראה'
-            );
+            const quote = await askGroq('אוסף ציטוטים. ציטוט השראה מפורסם. פורמט: "הציטוט" — השם.', 'ציטוט');
             if (quote) await sock.sendMessage(jid, { text: `✨ ${quote}` });
             return true;
         }
 
         // ── טריוויה ───────────────────────────────────────────────
         if (text === 'טריוויה') {
-            const trivia = await askGroq(
-                'אתה שואל שאלות טריוויה. צור שאלה מעניינת בעברית עם 4 אפשרויות (א/ב/ג/ד) ובסוף — ||התשובה: X||',
-                'שאלת טריוויה',
-                250
-            );
+            const trivia = await askGroq('שואל טריוויה. שאלה בעברית עם 4 אפשרויות (א/ב/ג/ד) ובסוף ||התשובה: X||', 'טריוויה', 250);
             if (trivia) await sock.sendMessage(jid, { text: `🧠 *טריוויה!*\n\n${trivia}` });
+            return true;
+        }
+
+        // ── חידה ──────────────────────────────────────────────────
+        if (text === 'חידה') {
+            const riddle = await askGroq(
+                'אתה מציג חידות. כתוב חידה בעברית ואחריה את התשובה המוסתרת בפורמט: ||תשובה: X||',
+                'חידה מעניינת', 200
+            );
+            if (riddle) await sock.sendMessage(jid, { text: `🎭 *חידה:*\n\n${riddle}` });
             return true;
         }
 
         // ── ראפ ───────────────────────────────────────────────────
         if (text.startsWith('ראפ ')) {
             const topic = text.slice('ראפ '.length).trim();
-            const rap = await askGroq(
-                'אתה ראפר ישראלי. כתוב ראפ קצר (4-8 שורות) מצחיק בעברית עם חריזה על הנושא שיינתן.',
-                `ראפ על: ${topic}`,
-                300
-            );
+            const rap = await askGroq('ראפר ישראלי. ראפ קצר (4-8 שורות) מצחיק בעברית עם חריזה.', `ראפ על: ${topic}`, 300);
             if (rap) await sock.sendMessage(jid, { text: `🎤 *ראפ על "${topic}":*\n\n${rap}` });
             return true;
         }
@@ -345,12 +310,77 @@ async function handleFunCommand(sock, msg, jid, text, pushName, groupParticipant
             const input = text.slice('תרגם '.length).trim();
             const isHebrew = /[֐-׿]/.test(input);
             const targetLang = isHebrew ? 'אנגלית' : 'עברית';
-            const translated = await askGroq(
-                `תרגם את הטקסט ל${targetLang}. תן רק את התרגום, ללא הסברים.`,
-                input,
-                200
-            );
+            const translated = await askGroq(`תרגם ל${targetLang}. תן רק את התרגום.`, input, 200);
             if (translated) await sock.sendMessage(jid, { text: `🌐 *תרגום ל${targetLang}:*\n${translated}` });
+            return true;
+        }
+
+        // ── מחמאה ─────────────────────────────────────────────────
+        if (text.startsWith('מחמאה ')) {
+            const name = text.slice('מחמאה '.length).trim().replace('@', '');
+            const comp = await askGroq('אתה מחלק מחמאות מצחיקות וחמות. מחמאה אחת קצרה ומצחיקה בעברית.', `מחמאה עבור ${name}`, 150);
+            if (comp) await sock.sendMessage(jid, { text: `💐 *מחמאה ל${name}:*\n${comp}` });
+            return true;
+        }
+
+        // ── עלבון ─────────────────────────────────────────────────
+        if (text.startsWith('עלבון ')) {
+            const name = text.slice('עלבון '.length).trim().replace('@', '');
+            const insult = await askGroq('אתה מחלק עלבונות קלים ומצחיקים לחלוטין. עלבון אחד קצר בעברית, לא פוגע באמת, כמו בין חברים.', `עלבון עבור ${name}`, 150);
+            if (insult) await sock.sendMessage(jid, { text: `😈 *עלבון ל${name}:*\n${insult}` });
+            return true;
+        }
+
+        // ── רולטה ─────────────────────────────────────────────────
+        if (text === 'רולטה') {
+            if (!groupParticipants || groupParticipants.length === 0) { await sock.sendMessage(jid, { text: '⚠️ אין משתתפים' }); return true; }
+            const victim = groupParticipants[Math.floor(Math.random() * groupParticipants.length)];
+            const callout = await askGroq('קבוצת חברים, ווטסאפ. משפט מצחיק של "רולטה רוסית" שנוחת על מישהו. קצר ומצחיק.', 'רולטה', 100) || '🎯 נפגע!';
+            await sock.sendMessage(jid, { text: `🔫 *רולטה!*\n@${victim.split('@')[0]}... ${callout}`, mentions: [victim] });
+            return true;
+        }
+
+        // ── מזל ───────────────────────────────────────────────────
+        if (text.startsWith('מזל ')) {
+            const sign = text.slice('מזל '.length).trim();
+            const horoscope = await askGroq(
+                'אתה אסטרולוג מצחיק. כתוב הורוסקופ יומי קצר ומצחיק בעברית למזל שיינתן.',
+                `הורוסקופ יומי למזל ${sign}`, 200
+            );
+            if (horoscope) await sock.sendMessage(jid, { text: `⭐ *מזל ${sign} להיום:*\n\n${horoscope}` });
+            return true;
+        }
+
+        // ── מתכון ─────────────────────────────────────────────────
+        if (text.startsWith('מתכון ')) {
+            const dish = text.slice('מתכון '.length).trim();
+            const recipe = await askGroq(
+                'אתה שף מנוסה. כתוב מתכון קצר בעברית: מצרכים + הוראות הכנה (ממוספרות). קצר ומעשי.',
+                `מתכון ל: ${dish}`, 500
+            );
+            if (recipe) await sock.sendMessage(jid, { text: `🍳 *מתכון ל${dish}:*\n\n${recipe}` });
+            return true;
+        }
+
+        // ── תרגיל ─────────────────────────────────────────────────
+        if (text.startsWith('תרגיל ')) {
+            const muscle = text.slice('תרגיל '.length).trim();
+            const exercise = await askGroq(
+                'אתה מאמן כושר. תאר תרגיל אחד מצוין בעברית: שם התרגיל, איך מבצעים (3-4 שלבים), כמה חזרות.',
+                `תרגיל ל: ${muscle}`, 300
+            );
+            if (exercise) await sock.sendMessage(jid, { text: `💪 *תרגיל ל${muscle}:*\n\n${exercise}` });
+            return true;
+        }
+
+        // ── מילה ──────────────────────────────────────────────────
+        if (text.startsWith('מילה ')) {
+            const word = text.slice('מילה '.length).trim();
+            const def = await askGroq(
+                'אתה מילון עברי. תן הגדרה קצרה של המילה + משפט לדוגמה. פורמט: *הגדרה:* X\n*לדוגמה:* Y',
+                `המילה: ${word}`, 200
+            );
+            if (def) await sock.sendMessage(jid, { text: `📖 *${word}*\n${def}` });
             return true;
         }
 
@@ -361,9 +391,8 @@ async function handleFunCommand(sock, msg, jid, text, pushName, groupParticipant
             const names = [...new Set(hist.map(m => m.sender).filter(Boolean))];
             const nameList = names.length > 0 ? names.join(', ') : 'חברים בקבוצה';
             const answer = await askGroq(
-                `אתה מכיר את חברי הקבוצה: ${nameList}. בהתאם לאישיות שמשתמעת מהשמות, החלט בצורה מצחיקה מי הכי סביר שאמר את הציטוט. תן תשובה קצרה ומצחיקה בעברית.`,
-                `מי היה אומר: "${quote}"?`,
-                150
+                `חברי הקבוצה: ${nameList}. בהתאם לאישיות, מי הכי סביר שאמר את הציטוט? תשובה מצחיקה קצרה בעברית.`,
+                `מי היה אומר: "${quote}"?`, 150
             );
             if (answer) await sock.sendMessage(jid, { text: `🤔 *מי אמר "${quote}"?*\n\n${answer}` });
             return true;
@@ -372,13 +401,29 @@ async function handleFunCommand(sock, msg, jid, text, pushName, groupParticipant
         // ── סקר ───────────────────────────────────────────────────
         if (text.startsWith('סקר ')) {
             const question = text.slice('סקר '.length).trim();
-            if (!question) {
-                await sock.sendMessage(jid, { text: '⚠️ כתוב: סקר [שאלה]' });
+            if (!question) { await sock.sendMessage(jid, { text: '⚠️ כתוב: סקר [שאלה]' }); return true; }
+            await sock.sendMessage(jid, { poll: { name: question, values: ['כן ✅', 'לא ❌', 'אולי 🤔'], selectableCount: 1 } });
+            return true;
+        }
+
+        // ── הצבעה ─────────────────────────────────────────────────
+        if (text.startsWith('הצבעה ')) {
+            const parts = text.slice('הצבעה '.length).split('|').map(s => s.trim()).filter(Boolean);
+            if (parts.length < 3) {
+                await sock.sendMessage(jid, { text: '⚠️ כתוב: הצבעה [שאלה] | [א] | [ב] | [ג]\nדוגמה: הצבעה מה אוכלים? | פיצה | שווארמה | סושי' });
                 return true;
             }
-            await sock.sendMessage(jid, {
-                poll: { name: question, values: ['כן ✅', 'לא ❌', 'אולי 🤔'], selectableCount: 1 }
-            });
+            const question = parts[0];
+            const options = parts.slice(1).slice(0, 12);
+            await sock.sendMessage(jid, { poll: { name: question, values: options, selectableCount: 1 } });
+            return true;
+        }
+
+        // ── אנונימי ───────────────────────────────────────────────
+        if (text.startsWith('אנונימי ')) {
+            const anonMsg = text.slice('אנונימי '.length).trim();
+            if (!anonMsg) { await sock.sendMessage(jid, { text: '⚠️ כתוב: אנונימי [הודעה]' }); return true; }
+            await sock.sendMessage(jid, { text: `🎭 *הודעה אנונימית:*\n${anonMsg}` });
             return true;
         }
 
@@ -396,12 +441,48 @@ async function handleFunCommand(sock, msg, jid, text, pushName, groupParticipant
             const ms = amount * (isHours ? 3600000 : 60000);
             const unitStr = isHours ? (amount === 1 ? 'שעה' : 'שעות') : (amount === 1 ? 'דקה' : 'דקות');
             await sock.sendMessage(jid, { text: `⏰ תזכורת נקבעה! אזכיר בעוד ${amount} ${unitStr}: "${reminderText}"` });
-            setTimeout(async () => {
-                try {
-                    await sock.sendMessage(jid, { text: `⏰ *תזכורת!*\n${reminderText}` });
-                } catch {}
-            }, ms);
+            setTimeout(async () => { try { await sock.sendMessage(jid, { text: `⏰ *תזכורת!*\n${reminderText}` }); } catch {} }, ms);
             return true;
+        }
+
+        // ── רשימה ─────────────────────────────────────────────────
+        if (text.startsWith('רשימה')) {
+            if (!groupLists.has(jid)) groupLists.set(jid, []);
+            const list = groupLists.get(jid);
+            const rest = text.slice('רשימה'.length).trim();
+
+            if (rest.startsWith('+ ') || rest.startsWith('+')) {
+                const item = rest.slice(1).trim();
+                if (!item) { await sock.sendMessage(jid, { text: '⚠️ כתוב: רשימה + [פריט]' }); return true; }
+                list.push(item);
+                await sock.sendMessage(jid, { text: `✅ נוסף: *${item}*\nסה"כ: ${list.length} פריטים` });
+                return true;
+            }
+
+            if (rest.startsWith('- ') || (rest.startsWith('-') && rest.length > 1)) {
+                const idx = parseInt(rest.slice(1).trim(), 10) - 1;
+                if (isNaN(idx) || idx < 0 || idx >= list.length) {
+                    await sock.sendMessage(jid, { text: `⚠️ מספר לא תקין. יש ${list.length} פריטים.` });
+                    return true;
+                }
+                const removed = list.splice(idx, 1)[0];
+                await sock.sendMessage(jid, { text: `🗑️ הוסר: *${removed}*` });
+                return true;
+            }
+
+            if (rest === 'נקה') {
+                const count = list.length;
+                list.length = 0;
+                await sock.sendMessage(jid, { text: `🧹 הרשימה נוקתה (${count} פריטים הוסרו)` });
+                return true;
+            }
+
+            if (rest === '?' || rest === '') {
+                if (list.length === 0) { await sock.sendMessage(jid, { text: '📋 הרשימה ריקה\nהוסף: רשימה + [פריט]' }); return true; }
+                const display = list.map((item, i) => `${i + 1}. ${item}`).join('\n');
+                await sock.sendMessage(jid, { text: `📋 *הרשימה (${list.length}):*\n${display}` });
+                return true;
+            }
         }
 
         // ── ספירה ─────────────────────────────────────────────────
@@ -414,38 +495,24 @@ async function handleFunCommand(sock, msg, jid, text, pushName, groupParticipant
 
         if (text === 'ספירה?') {
             const counter = groupCounters.get(jid);
-            if (!counter) {
-                await sock.sendMessage(jid, { text: '⚠️ אין ספירה פעילה. כתוב: ספירה [נושא]' });
-            } else {
-                await sock.sendMessage(jid, { text: `📊 *ספירה: ${counter.topic}*\nמונה: ${counter.count}` });
-            }
+            if (!counter) { await sock.sendMessage(jid, { text: '⚠️ אין ספירה פעילה. כתוב: ספירה [נושא]' }); }
+            else { await sock.sendMessage(jid, { text: `📊 *ספירה: ${counter.topic}*\nמונה: ${counter.count}` }); }
             return true;
         }
 
         if (text === '++') {
             const counter = groupCounters.get(jid);
-            if (!counter) {
-                await sock.sendMessage(jid, { text: '⚠️ אין ספירה פעילה. כתוב: ספירה [נושא]' });
-            } else {
-                counter.count++;
-                await sock.sendMessage(jid, { text: `📊 *${counter.topic}:* ${counter.count}` });
-            }
+            if (!counter) { await sock.sendMessage(jid, { text: '⚠️ אין ספירה פעילה. כתוב: ספירה [נושא]' }); }
+            else { counter.count++; await sock.sendMessage(jid, { text: `📊 *${counter.topic}:* ${counter.count}` }); }
             return true;
         }
 
         // ── סיכום ─────────────────────────────────────────────────
         if (text === 'סיכום') {
             const hist = groupHistory.get(jid) || [];
-            if (hist.length < 3) {
-                await sock.sendMessage(jid, { text: '⚠️ אין מספיק הודעות לסיכום עדיין' });
-                return true;
-            }
+            if (hist.length < 3) { await sock.sendMessage(jid, { text: '⚠️ אין מספיק הודעות לסיכום עדיין' }); return true; }
             const convo = hist.slice(-40).map(m => `${m.sender || 'מישהו'}: ${m.text}`).join('\n');
-            const summary = await askGroq(
-                'אתה מסכם שיחות ווטסאפ. תן סיכום קצר (3-5 נקודות) של מה שדובר, בעברית עם אמוג\'י.',
-                `סכם את השיחה:\n${convo}`,
-                400
-            );
+            const summary = await askGroq('מסכם שיחות ווטסאפ. 3-5 נקודות קצרות בעברית עם אמוג\'י.', `סכם:\n${convo}`, 400);
             if (summary) await sock.sendMessage(jid, { text: `📋 *סיכום השיחה:*\n\n${summary}` });
             return true;
         }
