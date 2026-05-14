@@ -26,9 +26,16 @@ async function handleGroupMessage(sock, msg) {
     let groupParticipants = [];
     try {
         const meta = await sock.groupMetadata(jid);
-        const botJid = normJid(sock.user?.id || '');
+        const botRawId = sock.user?.id || '';
+        const botJid = normJid(botRawId);
+        const botPhone = (process.env.OWNER_PHONE || '').replace(/\D/g, '');
+        const botLid   = (process.env.OWNER_LID   || '').replace(/\D/g, '');
         isSenderAdmin = meta.participants.some(p => normJid(p.id) === senderJid && p.admin);
-        isBotAdmin    = meta.participants.some(p => normJid(p.id) === botJid   && p.admin);
+        isBotAdmin    = meta.participants.some(p => {
+            const pid = normJid(p.id);
+            const num = pid.replace(/\D/g, '');
+            return p.admin && (pid === botJid || num === botPhone || num === botLid);
+        });
         groupParticipants = meta.participants.map(p => normJid(p.id));
         console.log(`🔍 senderJid=${senderJid} isSenderAdmin=${isSenderAdmin} botJid=${botJid} isBotAdmin=${isBotAdmin}`);
     } catch {}
