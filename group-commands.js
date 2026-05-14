@@ -48,9 +48,22 @@ const YTDL_COMMON = {
     ...(fs.existsSync(COOKIES_FILE) ? { cookies: COOKIES_FILE } : {}),
 };
 
+function cleanQuery(q) {
+    return q
+        .replace(/\(prod\.?\s*by[^)]*\)/gi, '')
+        .replace(/\(official\s*(video|audio|lyric[s]?)[^)]*\)/gi, '')
+        .replace(/\(clip\s*officiel[^)]*\)/gi, '')
+        .replace(/\([^)]{0,6}\)/g, '')  // remove short parentheses like (HQ)
+        .replace(/&/g, ' ')
+        .replace(/\s{2,}/g, ' ')
+        .trim()
+        .slice(0, 80);
+}
+
 async function downloadFromSoundCloud(query) {
-    console.log(`🎵 SoundCloud search: "${query}"`);
-    const results = await playdl.search(query, { source: { soundcloud: 'tracks' }, limit: 1 });
+    const cleaned = cleanQuery(query);
+    console.log(`🎵 SoundCloud search: "${cleaned}"`);
+    const results = await playdl.search(cleaned, { source: { soundcloud: 'tracks' }, limit: 1 });
     if (!results?.length) throw new Error('לא נמצא ב-SoundCloud');
     const track = results[0];
     if ((track.durationInSec || 0) > 660) throw new Error('השיר ארוך מדי');
