@@ -610,11 +610,11 @@ function parseOwnerCommand(text) {
     const statusMatch = t.match(/^סטטוס\s+([0-9]+)\s+(.+)$/);
     if (statusMatch) return { cmd: 'setstatus', phone: statusMatch[1], status: statusMatch[2].trim() };
     // Custom bots
-    const customBotSet = t.match(/^בוט\s+([0-9]+)\s+([\s\S]+)$/);
-    if (customBotSet) return { cmd: 'custom_bot_set', phone: customBotSet[1], prompt: customBotSet[2].trim() };
+    if (/^בוטים$/.test(t)) return { cmd: 'custom_bot_list' };
     const customBotRemove = t.match(/^בטל בוט\s+([0-9]+)$/);
     if (customBotRemove) return { cmd: 'custom_bot_remove', phone: customBotRemove[1] };
-    if (/^בוטים$/.test(t)) return { cmd: 'custom_bot_list' };
+    const customBotSet = t.match(/^בוט\s+([0-9]+)\s+([\s\S]+)/);
+    if (customBotSet) return { cmd: 'custom_bot_set', phone: customBotSet[1], prompt: customBotSet[2].trim() };
     return null;
 }
 
@@ -1398,6 +1398,7 @@ ${existingKnowledge}
                     }
                     if (cmd?.cmd === 'custom_bot_set') {
                         const ph = normalizePhone(cmd.phone) + '@s.whatsapp.net';
+                        console.log(`🤖 custom_bot_set ph=${ph} prompt=${cmd.prompt.slice(0,40)}`);
                         customBots[ph] = { prompt: cmd.prompt, phone: cmd.phone };
                         await saveCustomBots();
                         await sock.sendMessage(ph, { text: `שלום! ${cmd.prompt.split('.')[0].slice(0, 60)}` });
@@ -1462,8 +1463,13 @@ ${existingKnowledge}
                 }
 
                 // Custom personal bot for this contact
-                if (!isOwner && customBots[jid]) {
-                    const bot = customBots[jid];
+                const _cbPhone = jid.split('@')[0].replace(/\D/g,'');
+                const _cbEntry = customBots[jid] || Object.entries(customBots).find(([k, v]) => {
+                    const stored = (v.phone || k.split('@')[0]).replace(/\D/g,'');
+                    return _cbPhone.endsWith(stored) || stored.endsWith(_cbPhone);
+                });
+                if (!isOwner && _cbEntry) {
+                    const bot = Array.isArray(_cbEntry) ? _cbEntry[1] : _cbEntry;
                     if (!conversations.has('cb_' + jid)) conversations.set('cb_' + jid, []);
                     const cbHistory = conversations.get('cb_' + jid);
                     cbHistory.push({ role: 'user', content: userText });
