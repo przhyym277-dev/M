@@ -44,7 +44,7 @@ const YTDL_COMMON = {
     noWarnings: true,
     noCheckCertificates: true,
     jsRuntimes: `node:${process.execPath}`,
-    extractorArgs: 'youtube:player_client=android',
+    extractorArgs: 'youtube:player_client=tv_embedded,android,ios,web_creator',
     ...(fs.existsSync(COOKIES_FILE) ? { cookies: COOKIES_FILE } : {}),
 };
 
@@ -70,41 +70,42 @@ const SC_COMMON = {
 
 async function tryScSearch(q) {
     console.log(`🔍 scsearch: "${q}"`);
-    const data = await youtubedl(`scsearch1:${q}`, {
+    const data = await youtubedl(`scsearch3:${q}`, {
         ...SC_COMMON,
         flatPlaylist: true,
     });
-    return data?.entries?.[0] || (data?.id ? data : null);
+    if (data?.entries?.length) return data.entries;
+    if (data?.id) return [data];
+    return [];
 }
 
 async function downloadFromSoundCloud(query) {
     const cleaned = cleanQuery(query);
-
-    // Try multiple query variants: cleaned → original → first 2 words
     const variants = [cleaned, query, cleaned.split(' ').slice(0, 3).join(' ')].filter((v, i, a) => v && a.indexOf(v) === i);
-    let entry = null;
+
     for (const q of variants) {
-        try { entry = await tryScSearch(q); } catch {}
-        if (entry) break;
-    }
-    if (!entry) throw new Error(`לא נמצא ב-SoundCloud: "${cleaned}"`);
+        let entries = [];
+        try { entries = await tryScSearch(q); } catch {}
 
-    const trackUrl = entry.url || entry.webpage_url;
-    console.log(`✅ SC found: "${entry.title}" — downloading`);
-
-    let info;
-    try {
-        info = await youtubedl(trackUrl, SC_COMMON);
-    } catch (e) {
-        // 404 or unavailable track — treat as "not found" so caller falls through to YouTube
-        throw new Error(`לא נמצא ב-SoundCloud: ${e.message.slice(0, 60)}`);
+        for (const entry of entries) {
+            const trackUrl = entry.url || entry.webpage_url;
+            if (!trackUrl) continue;
+            console.log(`🎵 SC trying: "${entry.title}"`);
+            try {
+                const info = await youtubedl(trackUrl, SC_COMMON);
+                if (!info?.url) continue;
+                if ((info.duration || 0) > 660) continue;
+                const buffer = await downloadBuffer(info.url);
+                console.log(`✅ SC done: ${Math.round(buffer.length / 1024)}KB (${info.ext})`);
+                const mimetype = info.ext === 'mp3' ? 'audio/mpeg' : 'audio/mp4';
+                return { buffer, title: info.title, mimetype };
+            } catch {
+                // 404 or unavailable — try next entry
+            }
+        }
     }
-    if (!info?.url) throw new Error(`לא נמצא ב-SoundCloud: לא ניתן לקבל קישור`);
-    if ((info.duration || 0) > 660) throw new Error('השיר ארוך מדי');
-    const buffer = await downloadBuffer(info.url);
-    console.log(`✅ SC done: ${Math.round(buffer.length / 1024)}KB (${info.ext})`);
-    const mimetype = info.ext === 'mp3' ? 'audio/mpeg' : 'audio/mp4';
-    return { buffer, title: info.title, mimetype };
+
+    throw new Error(`לא נמצא ב-SoundCloud: "${cleaned}"`);
 }
 
 async function downloadSong(query) {
