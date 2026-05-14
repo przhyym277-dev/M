@@ -6,33 +6,11 @@ const QRCode = require('qrcode');
 const pino = require('pino');
 const https = require('https');
 const http  = require('http');
+const fs = require('fs');
+const path = require('path');
+const os = require('os');
+const youtubedl = require('youtube-dl-exec');
 const { isCommandLocked } = require('./group-admin');
-
-const PIPED_INSTANCES = [
-    'pipedapi.kavin.rocks',
-    'api.piped.yt',
-    'piped-api.privacy.com.de',
-    'watchapi.pluto.lat',
-    'piped.projectsegfau.lt',
-];
-
-const INVIDIOUS_INSTANCES = [
-    'inv.tux.pizza',
-    'invidious.io.lol',
-];
-
-function fetchJson(url, timeoutMs = 8000) {
-    return new Promise((resolve, reject) => {
-        const mod = url.startsWith('https') ? https : http;
-        const req = mod.get(url, { headers: { 'User-Agent': 'Mozilla/5.0' }, timeout: timeoutMs }, res => {
-            let d = '';
-            res.on('data', c => d += c);
-            res.on('end', () => { try { resolve(JSON.parse(d)); } catch (e) { reject(new Error('bad json')); } });
-        });
-        req.on('error', reject);
-        req.on('timeout', () => { req.destroy(); reject(new Error('timeout')); });
-    });
-}
 
 function downloadBuffer(url, timeoutMs = 30000) {
     return new Promise((resolve, reject) => {
@@ -50,59 +28,52 @@ function downloadBuffer(url, timeoutMs = 30000) {
     });
 }
 
-async function searchYouTube(query) {
-    const enc = encodeURIComponent(query);
+const YTDL_COMMON = {
+    noWarnings: true,
+    noCheckCertificates: true,
+    jsRuntimes: `node:${process.execPath}`,
+};
 
-    // Try Piped first
-    for (const inst of PIPED_INSTANCES) {
-        try {
-            console.log(`🔍 piped search via ${inst}`);
-            const data = await fetchJson(`https://${inst}/search?q=${enc}&filter=videos`);
-            const video = data.items?.find(i => i.duration > 0 && i.duration < 600 && i.url);
-            if (video) {
-                const videoId = video.url.match(/[?&]v=([^&]+)/)?.[1] || video.url.split('/').pop();
-                console.log(`✅ piped found: ${video.title}`);
-                return { videoId, title: video.title };
-            }
-        } catch (e) { console.log(`❌ piped ${inst}: ${e.message}`); }
+async function downloadSong(query) {
+    const urlMatch = query.match(/(?:v=|youtu\.be\/)([A-Za-z0-9_-]{11})/);
+    let videoId, title;
+
+    if (urlMatch) {
+        videoId = urlMatch[1];
+    } else {
+        // Search: flat-playlist gives us the id without fetching all format data
+        console.log(`🔍 yt-dlp search: "${query}"`);
+        const search = await youtubedl(`ytsearch1:${query}`, {
+            ...YTDL_COMMON,
+            dumpSingleJson: true,
+            flatPlaylist: true,
+        });
+        const entry = search?.entries?.[0];
+        if (!entry?.id) throw new Error('לא נמצא שיר');
+        videoId = entry.id;
+        title = entry.title;
+        console.log(`✅ found: "${title}" (${videoId})`);
     }
 
-    // Fallback: Invidious
-    for (const inst of INVIDIOUS_INSTANCES) {
-        try {
-            console.log(`🔍 invidious search via ${inst}`);
-            const results = await fetchJson(`https://${inst}/api/v1/search?q=${enc}&type=video&fields=videoId,title,lengthSeconds`);
-            const video = Array.isArray(results) && results.find(r => r.videoId && r.lengthSeconds < 600);
-            if (video) { console.log(`✅ invidious found: ${video.title}`); return video; }
-        } catch (e) { console.log(`❌ invidious ${inst}: ${e.message}`); }
-    }
+    // Get direct audio stream URL — no ffmpeg needed
+    console.log(`🎵 yt-dlp info: ${videoId}`);
+    const info = await youtubedl(`https://www.youtube.com/watch?v=${videoId}`, {
+        ...YTDL_COMMON,
+        dumpSingleJson: true,
+        format: 'bestaudio[ext=m4a]/bestaudio[ext=webm]/bestaudio',
+        noPlaylist: true,
+    });
 
-    return null;
-}
+    if (!info?.url) throw new Error('לא ניתן לקבל קישור אודיו');
+    if ((info.duration || 0) > 660) throw new Error('השיר ארוך מדי (מקסימום 11 דקות)');
+    title = title || info.title;
 
-async function getAudioUrl(videoId) {
-    // Try Piped first
-    for (const inst of PIPED_INSTANCES) {
-        try {
-            console.log(`🎵 piped streams via ${inst}`);
-            const info = await fetchJson(`https://${inst}/streams/${videoId}`);
-            const fmt = info.audioStreams?.sort((a, b) => (b.bitrate || 0) - (a.bitrate || 0))[0];
-            if (fmt?.url) { console.log(`✅ piped audio ok`); return { url: fmt.url, title: info.title }; }
-        } catch (e) { console.log(`❌ piped ${inst}: ${e.message}`); }
-    }
+    console.log(`⬇️ downloading stream (${info.ext})`);
+    const buffer = await downloadBuffer(info.url);
+    console.log(`✅ done: ${Math.round(buffer.length / 1024)}KB`);
 
-    // Fallback: Invidious
-    for (const inst of INVIDIOUS_INSTANCES) {
-        try {
-            console.log(`🎵 invidious audio via ${inst}`);
-            const info = await fetchJson(`https://${inst}/api/v1/videos/${videoId}?fields=adaptiveFormats,title`);
-            const formats = (info.adaptiveFormats || []).filter(f => f.type?.startsWith('audio/'));
-            const fmt = formats.find(f => f.type.includes('opus')) || formats.find(f => f.type.includes('mp4a')) || formats[0];
-            if (fmt?.url) { console.log(`✅ invidious audio ok`); return { url: fmt.url, title: info.title }; }
-        } catch (e) { console.log(`❌ invidious ${inst}: ${e.message}`); }
-    }
-
-    return null;
+    const mimetype = info.ext === 'webm' ? 'audio/ogg' : 'audio/mp4';
+    return { buffer, title, mimetype };
 }
 
 const GROQ_KEYS = [process.env.GROQ_API_KEY, process.env.GROQ_API_KEY_2, process.env.GROQ_API_KEY_3].filter(Boolean);
@@ -692,34 +663,9 @@ async function handleFunCommand(sock, msg, jid, text, pushName, groupParticipant
         // ── שיר ───────────────────────────────────────────────────
         if (text.startsWith('שיר ')) {
             const query = text.slice('שיר '.length).trim();
-            await sock.sendMessage(jid, { text: `🎵 מחפש: *${query}*...` });
+            await sock.sendMessage(jid, { text: `🎵 מחפש ומוריד: *${query}*\n⏳ זה לוקח כ-30 שניות...` });
             try {
-                let videoId = null;
-                let title = query;
-
-                // Extract video ID from URL or search by name
-                const urlMatch = query.match(/(?:v=|youtu\.be\/)([A-Za-z0-9_-]{11})/);
-                if (urlMatch) {
-                    videoId = urlMatch[1];
-                } else {
-                    const found = await searchYouTube(query);
-                    if (!found) {
-                        await sock.sendMessage(jid, { text: `❌ לא נמצא שיר עבור: "${query}"` });
-                        return true;
-                    }
-                    videoId = found.videoId;
-                    title = found.title;
-                }
-
-                await sock.sendMessage(jid, { text: `⬇️ מוריד: *${title}*\n⏳ רגע...` });
-
-                const audio = await getAudioUrl(videoId);
-                if (!audio) {
-                    await sock.sendMessage(jid, { text: `❌ לא הצלחתי לקבל את השיר. נסה שוב.` });
-                    return true;
-                }
-
-                const buffer = await downloadBuffer(audio.url);
+                const { buffer, title } = await downloadSong(query);
 
                 if (buffer.length > 15 * 1024 * 1024) {
                     await sock.sendMessage(jid, { text: `❌ השיר גדול מדי (${Math.round(buffer.length/1024/1024)}MB). מגבלה: 15MB` });
@@ -728,13 +674,14 @@ async function handleFunCommand(sock, msg, jid, text, pushName, groupParticipant
 
                 await sock.sendMessage(jid, {
                     audio: buffer,
-                    mimetype: 'audio/mp4',
+                    mimetype,
                     ptt: false,
                 }, { quoted: msg });
 
+                await sock.sendMessage(jid, { text: `🎵 *${title}*` });
             } catch (err) {
                 console.error('שיר error:', err.message);
-                await sock.sendMessage(jid, { text: `❌ שגיאה בהורדה. נסה שוב.\n_${err.message.slice(0, 80)}_` });
+                await sock.sendMessage(jid, { text: `❌ שגיאה בהורדה: ${err.message.slice(0, 100)}` });
             }
             return true;
         }
