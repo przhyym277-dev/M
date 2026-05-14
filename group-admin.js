@@ -2,6 +2,23 @@
 
 const groupSettings = new Map();
 const warnings = new Map();
+const lockedCommands = new Map();
+const groupWelcomeTemplates = new Map();
+
+const GLOBAL_SUPER_ADMINS = new Set(['972522091733', '972508181322']);
+
+const LOCKABLE_COMMANDS = ['בדיחות','טיפ','עובדה','ציטוט','טריוויה','חידה','נכון או אמת','מזל','שידוך','רולטה','ראפ','תרגם','מחמאה','עלבון','מתכון','תרגיל','מילה','שיר','סקר','הצבעה','אנונימי','תזכורת','ספירה','סיכום','מי אמר','גימטריה','הגרלה','חשב','חזור','qr','תמלל'];
+
+function isGlobalAdmin(senderJid) {
+    const phone = senderJid.split('@')[0];
+    return GLOBAL_SUPER_ADMINS.has(phone);
+}
+
+function isCommandLocked(gid, cmdName) {
+    const locked = lockedCommands.get(gid);
+    if (!locked) return false;
+    return locked.has(cmdName);
+}
 
 function getSettings(gid) {
     if (!groupSettings.has(gid)) groupSettings.set(gid, { removeLinks: false, removeStickerMode: false, stopStickerMode: false, welcomeEnabled: false, warningThreshold: 3, linkStats: 0 });
@@ -13,9 +30,16 @@ function getWarnings(gid) {
     return warnings.get(gid);
 }
 
+function getLockedSet(gid) {
+    if (!lockedCommands.has(gid)) lockedCommands.set(gid, new Set());
+    return lockedCommands.get(gid);
+}
+
 async function handleAdminCommand(sock, msg, jid, text, senderJid, isSenderAdmin, isBotAdmin) {
     const settings = getSettings(jid);
-    const cmd = text.trim().split(' ')[0];
+    const trimmed = text.trim();
+    const cmd = trimmed.split(' ')[0];
+    const isAdmin = isSenderAdmin || isGlobalAdmin(senderJid);
 
     if (cmd === 'הסרתקישורים') {
         try {
@@ -43,12 +67,100 @@ async function handleAdminCommand(sock, msg, jid, text, senderJid, isSenderAdmin
 
     if (cmd === 'אזהרות') {
         try {
-            const parts = text.trim().split(' ');
+            const parts = trimmed.split(' ');
             const n = parseInt(parts[1], 10);
             if (!isNaN(n) && n > 0) {
                 settings.warningThreshold = n;
                 await sock.sendMessage(jid, { text: `📍 סף האזהרות עודכן ל-*${n}*` });
             }
+        } catch (e) {}
+        return true;
+    }
+
+    if (trimmed === 'אפס אזהרות' || trimmed.startsWith('אפס אזהרות ')) {
+        try {
+            if (!isAdmin) {
+                await sock.sendMessage(jid, { text: `🚫 רק מנהלים יכולים להשתמש בפקודה זו.` });
+                return true;
+            }
+            const warns = getWarnings(jid);
+            const parts = trimmed.split(' ');
+            let targetJid = null;
+            if (parts.length > 2 && parts[2].startsWith('@')) {
+                const phone = parts[2].replace('@', '').replace(/\D/g, '');
+                if (phone) targetJid = `${phone}@s.whatsapp.net`;
+            }
+            if (!targetJid) {
+                targetJid = msg.message?.extendedTextMessage?.contextInfo?.participant || null;
+            }
+            if (!targetJid) {
+                await sock.sendMessage(jid, { text: `⚠️ יש להשיב להודעה של המשתמש או לציין @מספר.` });
+                return true;
+            }
+            warns.set(targetJid, 0);
+            await sock.sendMessage(jid, { text: `✅ אזהרות של @${targetJid.split('@')[0]} אופסו.`, mentions: [targetJid] });
+        } catch (e) {}
+        return true;
+    }
+
+    if (trimmed === 'הרשאות') {
+        try {
+            const locked = getLockedSet(jid);
+            const lines = LOCKABLE_COMMANDS.map((c, i) => `${i + 1}. ${locked.has(c) ? '🔒' : '🔓'} ${c}`);
+            await sock.sendMessage(jid, { text: `🛡️ *פקודות ניתנות לנעילה:*\n${lines.join('\n')}\n\nכתוב *נעל [מספר]* או *פתח [מספר]* לשינוי.` });
+        } catch (e) {}
+        return true;
+    }
+
+    if (trimmed.startsWith('נעל ') && !isNaN(parseInt(trimmed.split(' ')[1], 10))) {
+        try {
+            if (!isAdmin) {
+                await sock.sendMessage(jid, { text: `🚫 רק מנהלים יכולים להשתמש בפקודה זו.` });
+                return true;
+            }
+            const idx = parseInt(trimmed.split(' ')[1], 10) - 1;
+            if (idx < 0 || idx >= LOCKABLE_COMMANDS.length) {
+                await sock.sendMessage(jid, { text: `⚠️ מספר לא תקין.` });
+                return true;
+            }
+            const cmdName = LOCKABLE_COMMANDS[idx];
+            getLockedSet(jid).add(cmdName);
+            await sock.sendMessage(jid, { text: `🔒 הפקודה *${cmdName}* נעולה.` });
+        } catch (e) {}
+        return true;
+    }
+
+    if (trimmed.startsWith('פתח ') && !isNaN(parseInt(trimmed.split(' ')[1], 10))) {
+        try {
+            if (!isAdmin) {
+                await sock.sendMessage(jid, { text: `🚫 רק מנהלים יכולים להשתמש בפקודה זו.` });
+                return true;
+            }
+            const idx = parseInt(trimmed.split(' ')[1], 10) - 1;
+            if (idx < 0 || idx >= LOCKABLE_COMMANDS.length) {
+                await sock.sendMessage(jid, { text: `⚠️ מספר לא תקין.` });
+                return true;
+            }
+            const cmdName = LOCKABLE_COMMANDS[idx];
+            getLockedSet(jid).delete(cmdName);
+            await sock.sendMessage(jid, { text: `🔓 הפקודה *${cmdName}* פתוחה.` });
+        } catch (e) {}
+        return true;
+    }
+
+    if (trimmed.startsWith('ברוך הבא הגדר ')) {
+        try {
+            if (!isAdmin) {
+                await sock.sendMessage(jid, { text: `🚫 רק מנהלים יכולים להשתמש בפקודה זו.` });
+                return true;
+            }
+            const template = trimmed.slice('ברוך הבא הגדר '.length).trim();
+            if (!template) {
+                await sock.sendMessage(jid, { text: `⚠️ יש לציין תבנית הודעה. השתמש ב-{שם} כמציין מיקום.` });
+                return true;
+            }
+            groupWelcomeTemplates.set(jid, template);
+            await sock.sendMessage(jid, { text: `✅ תבנית ברוך הבא עודכנה:\n${template}` });
         } catch (e) {}
         return true;
     }
@@ -85,9 +197,9 @@ async function handleAdminCommand(sock, msg, jid, text, senderJid, isSenderAdmin
         return true;
     }
 
-    if (text.trim() === 'הסר קבוצה') {
+    if (trimmed === 'הסר קבוצה') {
         try {
-            if (!isSenderAdmin) {
+            if (!isAdmin) {
                 await sock.sendMessage(jid, { text: `🚫 רק מנהלים יכולים להשתמש בפקודה זו.` });
                 return true;
             }
@@ -106,7 +218,7 @@ async function handleAdminCommand(sock, msg, jid, text, senderJid, isSenderAdmin
         return true;
     }
 
-    if (text.trim() === 'מנהלי קבוצה') {
+    if (trimmed === 'מנהלי קבוצה') {
         try {
             const meta = await sock.groupMetadata(jid);
             const admins = meta.participants.filter(p => p.admin);
@@ -116,9 +228,9 @@ async function handleAdminCommand(sock, msg, jid, text, senderJid, isSenderAdmin
         return true;
     }
 
-    if (text.trim() === 'נעל קבוצה') {
+    if (trimmed === 'נעל קבוצה') {
         try {
-            if (!isSenderAdmin) {
+            if (!isAdmin) {
                 await sock.sendMessage(jid, { text: `🚫 רק מנהלים יכולים להשתמש בפקודה זו.` });
                 return true;
             }
@@ -128,9 +240,9 @@ async function handleAdminCommand(sock, msg, jid, text, senderJid, isSenderAdmin
         return true;
     }
 
-    if (text.trim() === 'פתח קבוצה') {
+    if (trimmed === 'פתח קבוצה') {
         try {
-            if (!isSenderAdmin) {
+            if (!isAdmin) {
                 await sock.sendMessage(jid, { text: `🚫 רק מנהלים יכולים להשתמש בפקודה זו.` });
                 return true;
             }
@@ -140,7 +252,7 @@ async function handleAdminCommand(sock, msg, jid, text, senderJid, isSenderAdmin
         return true;
     }
 
-    if (text.trim() === 'ברוך הבא') {
+    if (trimmed === 'ברוך הבא') {
         try {
             settings.welcomeEnabled = !settings.welcomeEnabled;
             const enabled = settings.welcomeEnabled;
@@ -149,7 +261,7 @@ async function handleAdminCommand(sock, msg, jid, text, senderJid, isSenderAdmin
         return true;
     }
 
-    if (text.trim() === 'קישור') {
+    if (trimmed === 'קישור') {
         try {
             const inv = await sock.groupInviteCode(jid);
             await sock.sendMessage(jid, { text: `🔗 *קישור לקבוצה:*\nhttps://chat.whatsapp.com/${inv}` });
@@ -157,9 +269,9 @@ async function handleAdminCommand(sock, msg, jid, text, senderJid, isSenderAdmin
         return true;
     }
 
-    if (text.trim() === 'ניהול') {
+    if (trimmed === 'ניהול') {
         try {
-            if (!isSenderAdmin) {
+            if (!isAdmin) {
                 await sock.sendMessage(jid, { text: `🚫 רק מנהלים יכולים להשתמש בפקודה זו.` });
                 return true;
             }
@@ -179,7 +291,7 @@ async function handleAdminCommand(sock, msg, jid, text, senderJid, isSenderAdmin
         return true;
     }
 
-    if (text.trim() === 'קידומת חסומים') {
+    if (trimmed === 'קידומת חסומים') {
         try {
             const { removeLinks, removeStickerMode, warningThreshold: threshold } = settings;
             await sock.sendMessage(jid, {
@@ -192,12 +304,12 @@ async function handleAdminCommand(sock, msg, jid, text, senderJid, isSenderAdmin
     return false;
 }
 
-async function handleAutoModeration(sock, msg, jid, senderJid, isBotAdmin) {
+async function handleAutoModeration(sock, msg, jid, senderJid, isBotAdmin, isSenderAdmin) {
     if (!isBotAdmin) return false;
     const settings = getSettings(jid);
     const msgContent = msg.message;
 
-    if (settings.removeLinks) {
+    if (settings.removeLinks && !isSenderAdmin && !isGlobalAdmin(senderJid)) {
         const text = msgContent?.conversation || msgContent?.extendedTextMessage?.text || msgContent?.imageMessage?.caption || '';
         const hasLink = /https?:\/\/|wa\.me\/|t\.me\/|bit\.ly/i.test(text);
         if (hasLink) {
@@ -219,11 +331,31 @@ async function handleAutoModeration(sock, msg, jid, senderJid, isBotAdmin) {
 
     if (settings.removeStickerMode && msgContent?.stickerMessage) {
         await sock.sendMessage(jid, { delete: msg.key });
+        const warns = getWarnings(jid);
+        const count = (warns.get(senderJid) || 0) + 1;
+        warns.set(senderJid, count);
+        if (count >= settings.warningThreshold) {
+            warns.delete(senderJid);
+            await sock.groupParticipantsUpdate(jid, [senderJid], 'remove');
+            await sock.sendMessage(jid, { text: `⛔ @${senderJid.split('@')[0]} הוסר מהקבוצה לאחר ${settings.warningThreshold} אזהרות.`, mentions: [senderJid] });
+        } else {
+            await sock.sendMessage(jid, { text: `⚠️ @${senderJid.split('@')[0]} אזהרה ${count}/${settings.warningThreshold} — סטיקרים אסורים בקבוצה!`, mentions: [senderJid] });
+        }
         return true;
     }
 
     if (settings.stopStickerMode && msgContent?.stickerMessage) {
         await sock.sendMessage(jid, { delete: msg.key });
+        const warns = getWarnings(jid);
+        const count = (warns.get(senderJid) || 0) + 1;
+        warns.set(senderJid, count);
+        if (count >= settings.warningThreshold) {
+            warns.delete(senderJid);
+            await sock.groupParticipantsUpdate(jid, [senderJid], 'remove');
+            await sock.sendMessage(jid, { text: `⛔ @${senderJid.split('@')[0]} הוסר מהקבוצה לאחר ${settings.warningThreshold} אזהרות.`, mentions: [senderJid] });
+        } else {
+            await sock.sendMessage(jid, { text: `⚠️ @${senderJid.split('@')[0]} אזהרה ${count}/${settings.warningThreshold} — סטיקרים אסורים בקבוצה!`, mentions: [senderJid] });
+        }
         return true;
     }
 
@@ -233,12 +365,17 @@ async function handleAutoModeration(sock, msg, jid, senderJid, isBotAdmin) {
 async function handleWelcome(sock, jid, participants) {
     const settings = getSettings(jid);
     if (!settings.welcomeEnabled) return;
+    const template = groupWelcomeTemplates.get(jid) || null;
     for (const p of participants) {
-        await sock.sendMessage(jid, {
-            text: `👋 *ברוך הבא לקבוצה!* 🎉\n@${p.split('@')[0]}\nשמחים שהצטרפת! 😊`,
-            mentions: [p]
-        });
+        const mention = `@${p.split('@')[0]}`;
+        let text;
+        if (template) {
+            text = template.replace(/\{שם\}/g, mention);
+        } else {
+            text = `👋 *ברוך הבא לקבוצה!* 🎉\n${mention}\nשמחים שהצטרפת! 😊`;
+        }
+        await sock.sendMessage(jid, { text, mentions: [p] });
     }
 }
 
-module.exports = { handleAdminCommand, handleAutoModeration, handleWelcome };
+module.exports = { handleAdminCommand, handleAutoModeration, handleWelcome, isCommandLocked };

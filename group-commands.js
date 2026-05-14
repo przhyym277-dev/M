@@ -6,6 +6,7 @@ const QRCode = require('qrcode');
 const pino = require('pino');
 const https = require('https');
 const http  = require('http');
+const { isCommandLocked } = require('./group-admin');
 
 const PIPED_INSTANCES = [
     'pipedapi.kavin.rocks',
@@ -146,13 +147,45 @@ function calcGematria(t) { let v=0; for (const c of t) if (GEMATRIA_MAP[c]) v+=G
 
 const HEBREW_DAYS = ['ראשון','שני','שלישי','רביעי','חמישי','שישי','שבת'];
 
+const COUNTRY_CODES = [
+    ['972','🇮🇱','ישראל'],['1','🇺🇸','ארה"ב / קנדה'],['44','🇬🇧','בריטניה'],
+    ['49','🇩🇪','גרמניה'],['33','🇫🇷','צרפת'],['39','🇮🇹','איטליה'],
+    ['34','🇪🇸','ספרד'],['7','🇷🇺','רוסיה'],['91','🇮🇳','הודו'],
+    ['55','🇧🇷','ברזיל'],['61','🇦🇺','אוסטרליה'],['81','🇯🇵','יפן'],['86','🇨🇳','סין'],
+];
+function getCountryInfo(phone) {
+    for (const [code, flag, name] of COUNTRY_CODES) {
+        if (phone.startsWith(code)) return `${flag} ${name}`;
+    }
+    return '🌍 לא ידוע';
+}
+
+const LOCKABLE_PREFIXES = [
+    ['ראפ ','ראפ'],['תרגם ','תרגם'],['מחמאה ','מחמאה'],['עלבון ','עלבון'],
+    ['מתכון ','מתכון'],['תרגיל ','תרגיל'],['מילה ','מילה'],['שיר ','שיר'],
+    ['סקר ','סקר'],['הצבעה ','הצבעה'],['אנונימי ','אנונימי'],['תזכורת ','תזכורת'],
+    ['ספירה ','ספירה'],['מי אמר ','מי אמר'],['גימטריה ','גימטריה'],
+    ['הגרלה ','הגרלה'],['חשב ','חשב'],['חזור ','חזור'],['מזל ','מזל'],
+    ['qr ','qr'],['QR ','qr'],
+];
+const LOCKABLE_EXACT = new Set(['בדיחות','טיפ','עובדה','ציטוט','טריוויה','חידה','נכון או אמת','שידוך','רולטה','סיכום','תמלל']);
+
+function getLockedCommandName(text) {
+    if (LOCKABLE_EXACT.has(text)) return text;
+    for (const [prefix, name] of LOCKABLE_PREFIXES) {
+        if (text.startsWith(prefix)) return name;
+    }
+    return null;
+}
+
 async function handleFunCommand(sock, msg, jid, text, pushName, groupParticipants) {
     const t = Date.now();
     try {
 
-        // ── מי בנה אותך ───────────────────────────────────────────
-        if (/מי בנה אותך|מי יצר אותך|מי עשה אותך/.test(text)) {
-            await sock.sendMessage(jid, { text: `👑 *יאיר פרץ* — הגאון, המלך, האגדה.\n🤡 *יאיר פריש* — אני חושבת שצריך לפטר אותו.` });
+        // ── בדיקת נעילה ───────────────────────────────────────────
+        const lockedName = getLockedCommandName(text);
+        if (lockedName && isCommandLocked(jid, lockedName)) {
+            await sock.sendMessage(jid, { text: '🔒 פקודה זו נעולה על ידי מנהל הקבוצה.' });
             return true;
         }
 
@@ -202,6 +235,7 @@ async function handleFunCommand(sock, msg, jid, text, pushName, groupParticipant
 • \`חזור [טקסט]\` 🦜 • \`qr [טקסט]\`
 • \`תמלל\` (כתגובה להקלטה)
 • \`שיר [שם / URL]\` — הורדת שיר מיוטיוב 🎵
+• \`פרופיל [@משתמש]\` — פרטי חבר קבוצה
 
 📊 *קבוצה*
 • \`סקר [שאלה]\` — סקר כן/לא/אולי
@@ -221,6 +255,37 @@ async function handleFunCommand(sock, msg, jid, text, pushName, groupParticipant
 • \`נעל קבוצה\` / \`פתח קבוצה\`
 • \`מנהלי קבוצה\` • \`ברוך הבא\`
 • \`קישור\` • \`ניהול\` (כתגובה)` });
+            return true;
+        }
+
+        // ── פרופיל ────────────────────────────────────────────────
+        if (text.startsWith('פרופיל')) {
+            let targetJid = null;
+            let targetName = null;
+            const mentioned = msg.message?.extendedTextMessage?.contextInfo?.mentionedJid;
+            const quoted = msg.message?.extendedTextMessage?.contextInfo?.participant;
+            if (mentioned && mentioned.length > 0) {
+                targetJid = mentioned[0];
+            } else if (quoted) {
+                targetJid = quoted;
+            } else {
+                const phoneMatch = text.match(/\d{7,15}/);
+                if (phoneMatch) targetJid = `${phoneMatch[0]}@s.whatsapp.net`;
+            }
+            if (!targetJid) { targetJid = msg.key.participant || (msg.key.remoteJid); }
+            const phone = targetJid.split('@')[0];
+            const country = getCountryInfo(phone);
+            let pfpBuf = null;
+            try {
+                const pfpUrl = await sock.profilePictureUrl(targetJid, 'image');
+                pfpBuf = await downloadBuffer(pfpUrl, 10000);
+            } catch {}
+            const profileText = `👤 *פרופיל*\n📱 מספר: +${phone}\n🌍 מדינה: ${country}`;
+            if (pfpBuf) {
+                await sock.sendMessage(jid, { image: pfpBuf, caption: profileText, mentions: [targetJid] });
+            } else {
+                await sock.sendMessage(jid, { text: profileText, mentions: [targetJid] });
+            }
             return true;
         }
 
