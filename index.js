@@ -1553,3 +1553,7 @@ ${existingKnowledge}
 
 process.on('unhandledRejection', (err) => console.error('שגיאה:', err.message));
 startBot();
+
+// Start group/friends bot on the same process
+const { startGroupBot } = require('./group-bot');
+startGroupBot(null);
