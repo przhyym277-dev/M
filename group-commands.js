@@ -166,9 +166,9 @@ const LOCKABLE_PREFIXES = [
     ['סקר ','סקר'],['הצבעה ','הצבעה'],['אנונימי ','אנונימי'],['תזכורת ','תזכורת'],
     ['ספירה ','ספירה'],['מי אמר ','מי אמר'],['גימטריה ','גימטריה'],
     ['הגרלה ','הגרלה'],['חשב ','חשב'],['חזור ','חזור'],['מזל ','מזל'],
-    ['qr ','qr'],['QR ','qr'],
+    ['qr ','qr'],['QR ','qr'],['פרופיל ','פרופיל'],
 ];
-const LOCKABLE_EXACT = new Set(['בדיחות','טיפ','עובדה','ציטוט','טריוויה','חידה','נכון או אמת','שידוך','רולטה','סיכום','תמלל']);
+const LOCKABLE_EXACT = new Set(['בדיחות','טיפ','עובדה','ציטוט','טריוויה','חידה','נכון או אמת','שידוך','רולטה','סיכום','תמלל','פרופיל']);
 
 function getLockedCommandName(text) {
     if (LOCKABLE_EXACT.has(text)) return text;
@@ -259,28 +259,39 @@ async function handleFunCommand(sock, msg, jid, text, pushName, groupParticipant
         }
 
         // ── פרופיל ────────────────────────────────────────────────
-        if (text.startsWith('פרופיל')) {
+        if (text === 'פרופיל' || text.startsWith('פרופיל ')) {
             let targetJid = null;
             let targetName = null;
             const mentioned = msg.message?.extendedTextMessage?.contextInfo?.mentionedJid;
             const quoted = msg.message?.extendedTextMessage?.contextInfo?.participant;
+            const quotedName = msg.message?.extendedTextMessage?.contextInfo?.pushName;
             if (mentioned && mentioned.length > 0) {
                 targetJid = mentioned[0];
             } else if (quoted) {
                 targetJid = quoted;
+                targetName = quotedName || null;
             } else {
                 const phoneMatch = text.match(/\d{7,15}/);
                 if (phoneMatch) targetJid = `${phoneMatch[0]}@s.whatsapp.net`;
             }
-            if (!targetJid) { targetJid = msg.key.participant || (msg.key.remoteJid); }
-            const phone = targetJid.split('@')[0];
+            if (!targetJid) {
+                targetJid = msg.key.participant || msg.key.remoteJid;
+                targetName = pushName || null;
+            }
+            const phone = (targetJid.split('@')[0]).replace(/\D/g, '');
             const country = getCountryInfo(phone);
+            const displayName = targetName || 'לא ידוע';
             let pfpBuf = null;
             try {
                 const pfpUrl = await sock.profilePictureUrl(targetJid, 'image');
                 pfpBuf = await downloadBuffer(pfpUrl, 10000);
             } catch {}
-            const profileText = `👤 *פרופיל*\n📱 מספר: +${phone}\n🌍 מדינה: ${country}`;
+            const profileText =
+                `👤 *פרופיל משתמש*\n\n` +
+                `📛 *שם:* ${displayName}\n` +
+                `📱 *מספר:* +${phone}\n` +
+                `🆔 *מזהה:* ${targetJid}\n` +
+                `🌍 *ארץ:* ${country}`;
             if (pfpBuf) {
                 await sock.sendMessage(jid, { image: pfpBuf, caption: profileText, mentions: [targetJid] });
             } else {
