@@ -10,10 +10,12 @@ function getGroupText(msg) {
         || '';
 }
 
+const normJid = (id) => (id || '').replace(/:.*@/, '@');
+
 async function handleGroupMessage(sock, msg) {
     const jid = msg.key.remoteJid;
     const text = getGroupText(msg).trim();
-    const senderJid = msg.key.participant || msg.key.fromMe ? (sock.user?.id || '') : (msg.participant || '');
+    const senderJid = normJid(msg.key.participant || msg.participant || '');
 
     console.log(`👥 [קבוצה] ${jid.split('@')[0].slice(-6)} | ${msg.pushName || senderJid.split('@')[0]}: ${text || '[מדיה]'}`);
 
@@ -24,10 +26,11 @@ async function handleGroupMessage(sock, msg) {
     let groupParticipants = [];
     try {
         const meta = await sock.groupMetadata(jid);
-        const botJid = sock.user?.id?.replace(/:.*@/, '@') || '';
-        isSenderAdmin = meta.participants.some(p => p.id === senderJid && p.admin);
-        isBotAdmin    = meta.participants.some(p => p.id === botJid   && p.admin);
-        groupParticipants = meta.participants.map(p => p.id);
+        const botJid = normJid(sock.user?.id || '');
+        isSenderAdmin = meta.participants.some(p => normJid(p.id) === senderJid && p.admin);
+        isBotAdmin    = meta.participants.some(p => normJid(p.id) === botJid   && p.admin);
+        groupParticipants = meta.participants.map(p => normJid(p.id));
+        console.log(`🔍 senderJid=${senderJid} isSenderAdmin=${isSenderAdmin} botJid=${botJid} isBotAdmin=${isBotAdmin}`);
     } catch {}
 
     const moderated = await handleAutoModeration(sock, msg, jid, senderJid, isBotAdmin);
