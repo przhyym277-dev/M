@@ -5,6 +5,7 @@ const Groq = require('groq-sdk');
 const crm = require('./crm');
 const { generateQuote } = require('./quote');
 const { generateContract } = require('./contract');
+const { handleGroupMessage, handleGroupParticipantUpdate } = require('./group-bot');
 const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion } = require('@whiskeysockets/baileys');
 const { Boom } = require('@hapi/boom');
 const pino = require('pino');
@@ -845,6 +846,10 @@ async function startBot() {
         }
     });
 
+    sock.ev.on('group-participants.update', async ({ id, participants, action }) => {
+        try { await handleGroupParticipantUpdate(sock, id, participants, action); } catch {}
+    });
+
     sock.ev.on('messages.upsert', async ({ messages, type }) => {
         if (type !== 'notify') return;
         for (const msg of messages) {
@@ -852,7 +857,10 @@ async function startBot() {
                 if (msg.key.fromMe) continue;
                 const jid = msg.key.remoteJid;
                 if (!jid || jid === 'status@broadcast') continue;
-                if (jid.endsWith('@g.us')) continue;
+                if (jid.endsWith('@g.us')) {
+                    await handleGroupMessage(sock, msg);
+                    continue;
+                }
 
                 let userText = getText(msg);
                 const hasAudio = !!(msg.message?.audioMessage);
@@ -1554,6 +1562,3 @@ ${existingKnowledge}
 process.on('unhandledRejection', (err) => console.error('שגיאה:', err.message));
 startBot();
 
-// Start group/friends bot on the same process
-const { startGroupBot } = require('./group-bot');
-startGroupBot(null);
