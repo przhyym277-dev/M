@@ -6,6 +6,7 @@ const crm = require('./crm');
 const { generateQuote } = require('./quote');
 const { generateContract } = require('./contract');
 const { handleGroupMessage, handleGroupParticipantUpdate } = require('./group-bot');
+const customBotsModule = require('./custom-bots');
 const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion } = require('@whiskeysockets/baileys');
 const { Boom } = require('@hapi/boom');
 const pino = require('pino');
@@ -59,7 +60,7 @@ let projects   = loadJSON('PROJECTS_DATA');
 let incomeLog  = loadJSON('INCOME_DATA');
 let calendar   = loadJSON('CALENDAR_DATA');
 let calendarIdCounter = (calendar.length ? Math.max(...calendar.map(e => e.id)) + 1 : 1);
-let customBots = loadJSON('CUSTOM_BOTS_DATA', {});
+// customBots state managed by custom-bots.js module
 
 // Pending meeting approval from owner: { customerJid, name, slots: [{date,time,day},...] }
 let pendingMeetingApproval = null;
@@ -219,7 +220,7 @@ async function saveEnvVar(key, value) {
 }
 
 async function saveKnowledgeToRender(knowledge) { await saveEnvVar('BUSINESS_KNOWLEDGE', knowledge); }
-async function saveCustomBots() { await saveEnvVar('CUSTOM_BOTS_DATA', JSON.stringify(customBots)); }
+async function saveCustomBots() { await customBotsModule.save(); }
 
 async function saveProjects()  { await saveEnvVar('PROJECTS_DATA',  JSON.stringify(projects)); }
 async function saveIncome()    { await saveEnvVar('INCOME_DATA',    JSON.stringify(incomeLog)); }
@@ -1397,31 +1398,23 @@ ${existingKnowledge}
                         continue;
                     }
                     if (cmd?.cmd === 'custom_bot_set') {
-                        const ph = normalizePhone(cmd.phone) + '@s.whatsapp.net';
-                        console.log(`🤖 custom_bot_set ph=${ph} prompt=${cmd.prompt.slice(0,40)}`);
-                        customBots[ph] = { prompt: cmd.prompt, phone: cmd.phone };
+                        const ph = customBotsModule.set(cmd.phone, cmd.prompt);
                         await saveCustomBots();
-                        await sock.sendMessage(ph, { text: `שלום! ${cmd.prompt.split('.')[0].slice(0, 60)}` });
                         await sock.sendMessage(jid, { text: `✅ בוט אישי נוצר עבור ${cmd.phone}\n\n*פרומט:*\n${cmd.prompt}` });
                         continue;
                     }
                     if (cmd?.cmd === 'custom_bot_remove') {
-                        const ph = normalizePhone(cmd.phone) + '@s.whatsapp.net';
-                        if (customBots[ph]) {
-                            delete customBots[ph];
-                            await saveCustomBots();
-                            await sock.sendMessage(jid, { text: `✅ הבוט האישי של ${cmd.phone} בוטל.` });
-                        } else {
-                            await sock.sendMessage(jid, { text: `❌ אין בוט אישי למספר ${cmd.phone}` });
-                        }
+                        const removed = customBotsModule.remove(cmd.phone);
+                        await saveCustomBots();
+                        await sock.sendMessage(jid, { text: removed ? `✅ הבוט האישי של ${cmd.phone} בוטל.` : `❌ אין בוט אישי למספר ${cmd.phone}` });
                         continue;
                     }
                     if (cmd?.cmd === 'custom_bot_list') {
-                        const entries = Object.entries(customBots);
+                        const entries = customBotsModule.list();
                         if (entries.length === 0) {
                             await sock.sendMessage(jid, { text: '🤖 אין בוטים אישיים פעילים.' });
                         } else {
-                            const lines = entries.map(([ph, b]) => `📱 *${b.phone || ph.split('@')[0]}*\n_${b.prompt.slice(0, 80)}..._`);
+                            const lines = entries.map(b => `📱 *${b.phone}*\n_${b.prompt.slice(0, 80)}..._`);
                             await sock.sendMessage(jid, { text: `🤖 *בוטים אישיים פעילים (${entries.length}):*\n\n${lines.join('\n\n')}` });
                         }
                         continue;
@@ -1463,13 +1456,9 @@ ${existingKnowledge}
                 }
 
                 // Custom personal bot for this contact
-                const _cbPhone = jid.split('@')[0].replace(/\D/g,'');
-                const _cbEntry = customBots[jid] || Object.entries(customBots).find(([k, v]) => {
-                    const stored = (v.phone || k.split('@')[0]).replace(/\D/g,'');
-                    return _cbPhone.endsWith(stored) || stored.endsWith(_cbPhone);
-                });
-                if (!isOwner && _cbEntry) {
-                    const bot = Array.isArray(_cbEntry) ? _cbEntry[1] : _cbEntry;
+                const _cbBot = customBotsModule.findByJid(jid);
+                if (!isOwner && _cbBot) {
+                    const bot = _cbBot;
                     if (!conversations.has('cb_' + jid)) conversations.set('cb_' + jid, []);
                     const cbHistory = conversations.get('cb_' + jid);
                     cbHistory.push({ role: 'user', content: userText });
