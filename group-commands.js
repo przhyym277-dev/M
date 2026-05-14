@@ -705,7 +705,7 @@ async function handleFunCommand(sock, msg, jid, text, pushName, groupParticipant
             const query = text.slice('שיר '.length).trim();
             await sock.sendMessage(jid, { text: `🎵 מחפש ומוריד: *${query}*\n⏳ זה לוקח כ-30 שניות...` });
             try {
-                const { buffer, title } = await downloadSong(query);
+                const { buffer, title, mimetype } = await downloadSong(query);
 
                 if (buffer.length > 15 * 1024 * 1024) {
                     await sock.sendMessage(jid, { text: `❌ השיר גדול מדי (${Math.round(buffer.length/1024/1024)}MB). מגבלה: 15MB` });
