@@ -92,8 +92,14 @@ async function downloadFromSoundCloud(query) {
     const trackUrl = entry.url || entry.webpage_url;
     console.log(`✅ SC found: "${entry.title}" — downloading`);
 
-    const info = await youtubedl(trackUrl, SC_COMMON);
-    if (!info?.url) throw new Error('SC: לא ניתן לקבל קישור');
+    let info;
+    try {
+        info = await youtubedl(trackUrl, SC_COMMON);
+    } catch (e) {
+        // 404 or unavailable track — treat as "not found" so caller falls through to YouTube
+        throw new Error(`לא נמצא ב-SoundCloud: ${e.message.slice(0, 60)}`);
+    }
+    if (!info?.url) throw new Error(`לא נמצא ב-SoundCloud: לא ניתן לקבל קישור`);
     if ((info.duration || 0) > 660) throw new Error('השיר ארוך מדי');
     const buffer = await downloadBuffer(info.url);
     console.log(`✅ SC done: ${Math.round(buffer.length / 1024)}KB (${info.ext})`);
@@ -133,8 +139,9 @@ async function downloadSong(query) {
     try {
         return await downloadFromSoundCloud(query);
     } catch (scErr) {
-        if (!scErr.message.includes('לא נמצא')) throw scErr;
-        console.log(`⚠️ SC not found — trying YouTube: "${query}"`);
+        // only block non-retriable errors (e.g. "ארוך מדי")
+        if (scErr.message === 'השיר ארוך מדי') throw scErr;
+        console.log(`⚠️ SC failed (${scErr.message.slice(0, 60)}) — trying YouTube`);
     }
 
     // Last resort: YouTube search + download
