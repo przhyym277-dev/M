@@ -17,7 +17,7 @@ async function handleAdminCommand(sock, msg, jid, text, senderJid, isSenderAdmin
     const settings = getSettings(jid);
     const cmd = text.trim().split(' ')[0];
 
-    if (cmd === '!הסרתקישורים') {
+    if (cmd === 'הסרתקישורים') {
         try {
             settings.removeLinks = true;
             const threshold = settings.warningThreshold;
@@ -26,7 +26,7 @@ async function handleAdminCommand(sock, msg, jid, text, senderJid, isSenderAdmin
         return true;
     }
 
-    if (cmd === '!בטלהסרתקישורים') {
+    if (cmd === 'בטלהסרתקישורים') {
         try {
             settings.removeLinks = false;
             await sock.sendMessage(jid, { text: `✅ הסרת קישורים בוטלה.` });
@@ -34,14 +34,14 @@ async function handleAdminCommand(sock, msg, jid, text, senderJid, isSenderAdmin
         return true;
     }
 
-    if (cmd === '!קישורים') {
+    if (cmd === 'קישורים') {
         try {
             await sock.sendMessage(jid, { text: `📊 *סטטיסטיקת קישורים:*\nקישורים שהוסרו: ${settings.linkStats}\nמצב: ${settings.removeLinks ? '🔴 פעיל' : '🟢 כבוי'}` });
         } catch (e) {}
         return true;
     }
 
-    if (cmd === '!אזהרות') {
+    if (cmd === 'אזהרות') {
         try {
             const parts = text.trim().split(' ');
             const n = parseInt(parts[1], 10);
@@ -53,7 +53,7 @@ async function handleAdminCommand(sock, msg, jid, text, senderJid, isSenderAdmin
         return true;
     }
 
-    if (cmd === '!הסרתסטיקרים') {
+    if (cmd === 'הסרתסטיקרים') {
         try {
             settings.removeStickerMode = true;
             await sock.sendMessage(jid, { text: `🚫 *הסרת סטיקרים פעילה!*` });
@@ -61,7 +61,7 @@ async function handleAdminCommand(sock, msg, jid, text, senderJid, isSenderAdmin
         return true;
     }
 
-    if (cmd === '!בטלהסרתסטיקרים') {
+    if (cmd === 'בטלהסרתסטיקרים') {
         try {
             settings.removeStickerMode = false;
             await sock.sendMessage(jid, { text: `✅ הסרת סטיקרים בוטלה.` });
@@ -69,7 +69,7 @@ async function handleAdminCommand(sock, msg, jid, text, senderJid, isSenderAdmin
         return true;
     }
 
-    if (cmd === '!סטופסטיקר') {
+    if (cmd === 'סטופסטיקר') {
         try {
             settings.stopStickerMode = true;
             await sock.sendMessage(jid, { text: `🛑 מצב עצירת סטיקרים פעיל.` });
@@ -77,7 +77,7 @@ async function handleAdminCommand(sock, msg, jid, text, senderJid, isSenderAdmin
         return true;
     }
 
-    if (cmd === '!פלייסטיקר') {
+    if (cmd === 'פלייסטיקר') {
         try {
             settings.stopStickerMode = false;
             await sock.sendMessage(jid, { text: `✅ סטיקרים מותרים שוב.` });
@@ -85,7 +85,7 @@ async function handleAdminCommand(sock, msg, jid, text, senderJid, isSenderAdmin
         return true;
     }
 
-    if (text.trim() === '!מנהלי קבוצה') {
+    if (text.trim() === 'מנהלי קבוצה') {
         try {
             const meta = await sock.groupMetadata(jid);
             const admins = meta.participants.filter(p => p.admin);
@@ -95,7 +95,7 @@ async function handleAdminCommand(sock, msg, jid, text, senderJid, isSenderAdmin
         return true;
     }
 
-    if (text.trim() === '!נעל קבוצה') {
+    if (text.trim() === 'נעל קבוצה') {
         try {
             if (!isSenderAdmin) {
                 await sock.sendMessage(jid, { text: `🚫 רק מנהלים יכולים להשתמש בפקודה זו.` });
@@ -107,7 +107,7 @@ async function handleAdminCommand(sock, msg, jid, text, senderJid, isSenderAdmin
         return true;
     }
 
-    if (text.trim() === '!פתח קבוצה') {
+    if (text.trim() === 'פתח קבוצה') {
         try {
             if (!isSenderAdmin) {
                 await sock.sendMessage(jid, { text: `🚫 רק מנהלים יכולים להשתמש בפקודה זו.` });
@@ -119,7 +119,7 @@ async function handleAdminCommand(sock, msg, jid, text, senderJid, isSenderAdmin
         return true;
     }
 
-    if (text.trim() === '!ברוך הבא') {
+    if (text.trim() === 'ברוך הבא') {
         try {
             settings.welcomeEnabled = !settings.welcomeEnabled;
             const enabled = settings.welcomeEnabled;
@@ -128,7 +128,7 @@ async function handleAdminCommand(sock, msg, jid, text, senderJid, isSenderAdmin
         return true;
     }
 
-    if (text.trim() === '!קישור') {
+    if (text.trim() === 'קישור') {
         try {
             const inv = await sock.groupInviteCode(jid);
             await sock.sendMessage(jid, { text: `🔗 *קישור לקבוצה:*\nhttps://chat.whatsapp.com/${inv}` });
@@ -136,7 +136,7 @@ async function handleAdminCommand(sock, msg, jid, text, senderJid, isSenderAdmin
         return true;
     }
 
-    if (text.trim() === '!ניהול') {
+    if (text.trim() === 'ניהול') {
         try {
             if (!isSenderAdmin) {
                 await sock.sendMessage(jid, { text: `🚫 רק מנהלים יכולים להשתמש בפקודה זו.` });
@@ -158,11 +158,11 @@ async function handleAdminCommand(sock, msg, jid, text, senderJid, isSenderAdmin
         return true;
     }
 
-    if (text.trim() === '!קידומת חסומים') {
+    if (text.trim() === 'קידומת חסומים') {
         try {
             const { removeLinks, removeStickerMode, warningThreshold: threshold } = settings;
             await sock.sendMessage(jid, {
-                text: `🛡️ *הגנת קידומת:*\nמצב הסרת קישורים: ${removeLinks ? '🔴 פעיל' : '⚪ כבוי'}\nמצב הסרת סטיקרים: ${removeStickerMode ? '🔴 פעיל' : '⚪ כבוי'}\nסף אזהרות: ${threshold}\n\nפקודות:\n• !הסרתקישורים\n• !בטלהסרתקישורים\n• !הסרתסטיקרים\n• !אזהרות [מספר]`
+                text: `🛡️ *הגנת קבוצה:*\nמצב הסרת קישורים: ${removeLinks ? '🔴 פעיל' : '⚪ כבוי'}\nמצב הסרת סטיקרים: ${removeStickerMode ? '🔴 פעיל' : '⚪ כבוי'}\nסף אזהרות: ${threshold}\n\nפקודות:\n• הסרתקישורים\n• בטלהסרתקישורים\n• הסרתסטיקרים\n• אזהרות [מספר]`
             });
         } catch (e) {}
         return true;
