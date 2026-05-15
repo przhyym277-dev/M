@@ -82,7 +82,7 @@ async function handleGroupMessage(sock, msg) {
         return;
     }
 
-    const funHandled = await handleFunCommand(sock, msg, jid, text, msg.pushName || '', groupParticipants);
+    const funHandled = await handleFunCommand(sock, msg, jid, text, msg.pushName || '', groupParticipants, senderJid);
     if (funHandled) return;
 
     await handleAdminCommand(sock, msg, jid, text, senderJid, isSenderAdmin, isBotAdmin);

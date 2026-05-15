@@ -12,6 +12,7 @@ const os = require('os');
 const youtubedl = require('youtube-dl-exec');
 const playdl = require('play-dl');
 const { isCommandLocked } = require('./group-admin');
+let sharp; try { sharp = require('sharp'); } catch {}
 
 function downloadBuffer(url, timeoutMs = 30000) {
     return new Promise((resolve, reject) => {
@@ -171,6 +172,86 @@ async function downloadSong(query) {
     }
 }
 
+// ── pending multi-step flows & games ─────────────────────────
+const pendingUserActions = new Map(); // `${jid}:${senderJid}` → action
+const activeGames        = new Map(); // jid → game state
+
+function formatDuration(secs) {
+    if (!secs) return '';
+    return `${Math.floor(secs / 60)}:${String(Math.floor(secs % 60)).padStart(2, '0')}`;
+}
+
+async function searchYouTube10(query) {
+    try {
+        const data = await youtubedl(`ytsearch10:${query}`, {
+            noWarnings: true, noCheckCertificates: true,
+            jsRuntimes: `node:${process.execPath}`,
+            extractorArgs: 'youtube:player_client=tv_embedded,android',
+            dumpSingleJson: true, flatPlaylist: true,
+        });
+        return (data?.entries || []).filter(e => e.id).slice(0, 10).map(e => ({
+            id: e.id,
+            title: e.title || e.id,
+            duration: formatDuration(e.duration),
+            url: `https://www.youtube.com/watch?v=${e.id}`,
+        }));
+    } catch { return []; }
+}
+
+async function downloadAsMp3(ytUrl, title) {
+    try { return await downloadFromSoundCloud(cleanQuery(title)); } catch {}
+    const info = await youtubedl(ytUrl, {
+        ...YTDL_COMMON, dumpSingleJson: true,
+        format: 'bestaudio[ext=m4a]/bestaudio[ext=webm]/bestaudio', noPlaylist: true,
+    });
+    if (!info?.url) throw new Error('לא ניתן להוריד');
+    if ((info.duration || 0) > 660) throw new Error('השיר ארוך מדי');
+    const buffer = await downloadBuffer(info.url);
+    return { buffer, title: info.title || title, mimetype: info.ext === 'webm' ? 'audio/ogg' : 'audio/mp4' };
+}
+
+async function downloadAsMp4(ytUrl, title) {
+    const info = await youtubedl(ytUrl, {
+        ...YTDL_COMMON, dumpSingleJson: true,
+        format: 'best[ext=mp4][height<=480]/best[ext=mp4]/best', noPlaylist: true,
+    });
+    if (!info?.url) throw new Error('לא ניתן להוריד');
+    if ((info.duration || 0) > 600) throw new Error('הוידאו ארוך מדי (מקסימום 10 דקות)');
+    const buffer = await downloadBuffer(info.url, 90000);
+    if (buffer.length > 50 * 1024 * 1024) throw new Error('הקובץ גדול מדי (מעל 50MB)');
+    return { buffer, title: info.title || title };
+}
+
+async function generateImage(prompt) {
+    const url = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=768&height=768&nologo=true&seed=${Math.floor(Math.random() * 99999)}`;
+    return await downloadBuffer(url, 60000);
+}
+
+// ── tic-tac-toe ───────────────────────────────────────────────
+const NUM_EMOJI = ['1️⃣','2️⃣','3️⃣','4️⃣','5️⃣','6️⃣','7️⃣','8️⃣','9️⃣'];
+function boardText(board) {
+    const c = i => board[i] === 'X' ? '❌' : board[i] === 'O' ? '⭕' : NUM_EMOJI[i];
+    return `${c(0)} ${c(1)} ${c(2)}\n${c(3)} ${c(4)} ${c(5)}\n${c(6)} ${c(7)} ${c(8)}`;
+}
+const WIN_LINES = [[0,1,2],[3,4,5],[6,7,8],[0,3,6],[1,4,7],[2,5,8],[0,4,8],[2,4,6]];
+function checkWin(board, p) { return WIN_LINES.some(([a,b,c]) => board[a]===p&&board[b]===p&&board[c]===p); }
+function getBotMove(board) {
+    for (const [a,b,c] of WIN_LINES) {
+        if (board[a]==='O'&&board[b]==='O'&&!board[c]) return c;
+        if (board[a]==='O'&&!board[b]&&board[c]==='O') return b;
+        if (!board[a]&&board[b]==='O'&&board[c]==='O') return a;
+    }
+    for (const [a,b,c] of WIN_LINES) {
+        if (board[a]==='X'&&board[b]==='X'&&!board[c]) return c;
+        if (board[a]==='X'&&!board[b]&&board[c]==='X') return b;
+        if (!board[a]&&board[b]==='X'&&board[c]==='X') return a;
+    }
+    if (!board[4]) return 4;
+    for (const i of [0,2,6,8]) if (!board[i]) return i;
+    for (let i = 0; i < 9; i++) if (!board[i]) return i;
+    return -1;
+}
+
 const GROQ_KEYS = [process.env.GROQ_API_KEY, process.env.GROQ_API_KEY_2, process.env.GROQ_API_KEY_3].filter(Boolean);
 let groqKeyIndex = 0;
 function getGroqClient() { return new Groq({ apiKey: GROQ_KEYS[groqKeyIndex % GROQ_KEYS.length] }); }
@@ -233,8 +314,9 @@ const LOCKABLE_PREFIXES = [
     ['ספירה ','ספירה'],['מי אמר ','מי אמר'],['גימטריה ','גימטריה'],
     ['הגרלה ','הגרלה'],['חשב ','חשב'],['חזור ','חזור'],['מזל ','מזל'],
     ['qr ','qr'],['QR ','qr'],['פרופיל ','פרופיל'],
+    ['תמונה ','תמונה'],['סטיקר ','סטיקר'],
 ];
-const LOCKABLE_EXACT = new Set(['בדיחות','טיפ','עובדה','ציטוט','טריוויה','חידה','נכון או אמת','שידוך','רולטה','סיכום','תמלל','פרופיל']);
+const LOCKABLE_EXACT = new Set(['בדיחות','טיפ','עובדה','ציטוט','טריוויה','חידה','נכון או אמת','שידוך','רולטה','סיכום','תמלל','פרופיל','משחקים','ניחוש','איקס עיגול']);
 
 function getLockedCommandName(text) {
     if (LOCKABLE_EXACT.has(text)) return text;
@@ -244,9 +326,102 @@ function getLockedCommandName(text) {
     return null;
 }
 
-async function handleFunCommand(sock, msg, jid, text, pushName, groupParticipants) {
+async function handleFunCommand(sock, msg, jid, text, pushName, groupParticipants, senderJid = '') {
     const t = Date.now();
     try {
+
+        // ── pending multi-step actions ─────────────────────────────
+        const pendingKey = `${jid}:${senderJid}`;
+        const pending = pendingUserActions.get(pendingKey);
+        if (pending) {
+            if (Date.now() > pending.expiresAt) { pendingUserActions.delete(pendingKey); }
+            else if (pending.type === 'song_results') {
+                const n = parseInt(text.trim(), 10);
+                if (!isNaN(n) && n >= 1 && n <= pending.results.length) {
+                    const chosen = pending.results[n - 1];
+                    pendingUserActions.set(pendingKey, { type: 'song_format', result: chosen, expiresAt: Date.now() + 3 * 60 * 1000 });
+                    await sock.sendMessage(jid, {
+                        text: `🎵 *${chosen.title}*${chosen.duration ? ` (${chosen.duration})` : ''}\n\nבאיזה פורמט?\n1️⃣ MP3 — שמע בלבד\n2️⃣ MP4 — וידאו`,
+                    }, { quoted: msg });
+                    return true;
+                }
+                // not a valid number — let other commands run, keep pending
+            } else if (pending.type === 'song_format') {
+                const choice = text.trim().toLowerCase();
+                if (['1','mp3','1️⃣'].includes(choice) || ['2','mp4','2️⃣'].includes(choice)) {
+                    const wantMp4 = ['2','mp4','2️⃣'].includes(choice);
+                    pendingUserActions.delete(pendingKey);
+                    const { result } = pending;
+                    await sock.sendMessage(jid, { text: `⬇️ מוריד *${result.title}*...` }, { quoted: msg });
+                    try {
+                        if (wantMp4) {
+                            const { buffer, title } = await downloadAsMp4(result.url, result.title);
+                            if (buffer.length > 50 * 1024 * 1024) { await sock.sendMessage(jid, { text: '❌ הקובץ גדול מדי' }); return true; }
+                            await sock.sendMessage(jid, { video: buffer, mimetype: 'video/mp4', fileName: `${title}.mp4` }, { quoted: msg });
+                        } else {
+                            const { buffer, title, mimetype } = await downloadAsMp3(result.url, result.title);
+                            if (buffer.length > 20 * 1024 * 1024) { await sock.sendMessage(jid, { text: '❌ הקובץ גדול מדי' }); return true; }
+                            await sock.sendMessage(jid, { audio: buffer, mimetype, ptt: false }, { quoted: msg });
+                            await sock.sendMessage(jid, { text: `🎵 *${title}*` });
+                        }
+                    } catch (e) {
+                        await sock.sendMessage(jid, { text: `❌ שגיאה בהורדה: ${e.message.slice(0, 80)}` });
+                    }
+                    return true;
+                }
+            }
+        }
+
+        // ── active game handler ────────────────────────────────────
+        const game = activeGames.get(jid);
+        if (game) {
+            if (game.type === 'guess') {
+                const n = parseInt(text.trim(), 10);
+                if (!isNaN(n) && n >= 1 && n <= 100) {
+                    game.attempts++;
+                    if (n === game.secret) {
+                        activeGames.delete(jid);
+                        await sock.sendMessage(jid, { text: `🎉 *כן!* המספר היה *${game.secret}*! ניצחת ב-${game.attempts} ניסיונות! 🏆` }, { quoted: msg });
+                    } else {
+                        const hint = n < game.secret ? '⬆️ גבוה יותר' : '⬇️ נמוך יותר';
+                        await sock.sendMessage(jid, { text: `${hint} (ניסיון ${game.attempts})` }, { quoted: msg });
+                    }
+                    return true;
+                }
+                if (text.trim() === 'עצור') { activeGames.delete(jid); await sock.sendMessage(jid, { text: `🛑 משחק הופסק. המספר היה *${game.secret}*.` }); return true; }
+            }
+            if (game.type === 'tictactoe' && game.playerJid === senderJid) {
+                const move = parseInt(text.trim(), 10) - 1;
+                if (!isNaN(move) && move >= 0 && move < 9 && !game.board[move]) {
+                    game.board[move] = 'X';
+                    if (checkWin(game.board, 'X')) {
+                        activeGames.delete(jid);
+                        await sock.sendMessage(jid, { text: `${boardText(game.board)}\n\n🏆 ניצחת! כל הכבוד!` }, { quoted: msg });
+                        return true;
+                    }
+                    if (game.board.every(c => c)) {
+                        activeGames.delete(jid);
+                        await sock.sendMessage(jid, { text: `${boardText(game.board)}\n\n🤝 תיקו!` }, { quoted: msg });
+                        return true;
+                    }
+                    const botMove = getBotMove(game.board);
+                    game.board[botMove] = 'O';
+                    if (checkWin(game.board, 'O')) {
+                        activeGames.delete(jid);
+                        await sock.sendMessage(jid, { text: `${boardText(game.board)}\n\n🤖 הבוט ניצח! נסה שוב` }, { quoted: msg });
+                        return true;
+                    }
+                    if (game.board.every(c => c)) {
+                        activeGames.delete(jid);
+                        await sock.sendMessage(jid, { text: `${boardText(game.board)}\n\n🤝 תיקו!` }, { quoted: msg });
+                        return true;
+                    }
+                    await sock.sendMessage(jid, { text: `${boardText(game.board)}\n\n✍️ תורך — שלח מספר 1-9` }, { quoted: msg });
+                    return true;
+                }
+                if (text.trim() === 'עצור') { activeGames.delete(jid); await sock.sendMessage(jid, { text: '🛑 המשחק הופסק.' }); return true; }
+            }
+        }
 
         // ── בדיקת נעילה ───────────────────────────────────────────
         const lockedName = getLockedCommandName(text);
@@ -300,7 +475,10 @@ async function handleFunCommand(sock, msg, jid, text, pushName, groupParticipant
 • \`הגרלה [א, ב, ג]\` • \`בחר [א | ב]\`
 • \`חזור [טקסט]\` 🦜 • \`qr [טקסט]\`
 • \`תמלל\` (כתגובה להקלטה)
-• \`שיר [שם / URL]\` — הורדת שיר מיוטיוב 🎵
+• \`שיר [שם / URL]\` — חיפוש 10 תוצאות + הורדה 🎵
+• \`תמונה [תיאור]\` — יצירת תמונה 🎨
+• \`סטיקר [תיאור]\` — יצירת סטיקר 🖼️
+• \`משחקים\` — ניחוש / איקס עיגול 🎮
 • \`פרופיל [@משתמש]\` — פרטי חבר קבוצה
 
 📊 *קבוצה*
@@ -758,26 +936,75 @@ async function handleFunCommand(sock, msg, jid, text, pushName, groupParticipant
         // ── שיר ───────────────────────────────────────────────────
         if (text.startsWith('שיר ')) {
             const query = text.slice('שיר '.length).trim();
-            await sock.sendMessage(jid, { text: `🎵 מחפש ומוריד: *${query}*\n⏳ זה לוקח כ-30 שניות...` });
-            try {
-                const { buffer, title, mimetype } = await downloadSong(query);
-
-                if (buffer.length > 15 * 1024 * 1024) {
-                    await sock.sendMessage(jid, { text: `❌ השיר גדול מדי (${Math.round(buffer.length/1024/1024)}MB). מגבלה: 15MB` });
-                    return true;
-                }
-
-                await sock.sendMessage(jid, {
-                    audio: buffer,
-                    mimetype,
-                    ptt: false,
-                }, { quoted: msg });
-
-                await sock.sendMessage(jid, { text: `🎵 *${title}*` });
-            } catch (err) {
-                console.error('שיר error:', err.message);
-                await sock.sendMessage(jid, { text: `❌ שגיאה בהורדה: ${err.message.slice(0, 100)}` });
+            // Direct YouTube URL → old single-step download
+            if (query.match(/(?:v=|youtu\.be\/)([A-Za-z0-9_-]{11})/)) {
+                await sock.sendMessage(jid, { text: `🎵 מוריד...` }, { quoted: msg });
+                try {
+                    const { buffer, title, mimetype } = await downloadSong(query);
+                    if (buffer.length > 20 * 1024 * 1024) { await sock.sendMessage(jid, { text: '❌ השיר גדול מדי' }); return true; }
+                    await sock.sendMessage(jid, { audio: buffer, mimetype, ptt: false }, { quoted: msg });
+                    await sock.sendMessage(jid, { text: `🎵 *${title}*` });
+                } catch (e) { await sock.sendMessage(jid, { text: `❌ שגיאה: ${e.message.slice(0, 80)}` }); }
+                return true;
             }
+            // Search → show 10 results
+            await sock.sendMessage(jid, { text: `🔍 מחפש: *${query}*...` }, { quoted: msg });
+            const results = await searchYouTube10(query);
+            if (!results.length) { await sock.sendMessage(jid, { text: '❌ לא נמצאו תוצאות' }); return true; }
+            const list = results.map((r, i) => `${i + 1}. ${r.title}${r.duration ? ` (${r.duration})` : ''}`).join('\n');
+            await sock.sendMessage(jid, { text: `🎵 *תוצאות עבור "${query}":*\n\n${list}\n\nשלח מספר 1-${results.length} לבחירה` }, { quoted: msg });
+            pendingUserActions.set(pendingKey, { type: 'song_results', results, expiresAt: Date.now() + 5 * 60 * 1000 });
+            return true;
+        }
+
+        // ── תמונה ─────────────────────────────────────────────────
+        if (text.startsWith('תמונה ')) {
+            const prompt = text.slice('תמונה '.length).trim();
+            await sock.sendMessage(jid, { text: `🎨 יוצר תמונה: *${prompt}*\n⏳ כ-15 שניות...` }, { quoted: msg });
+            try {
+                const imgBuf = await generateImage(prompt);
+                await sock.sendMessage(jid, { image: imgBuf, caption: `🎨 *${prompt}*` }, { quoted: msg });
+            } catch (e) { await sock.sendMessage(jid, { text: `❌ שגיאה ביצירת תמונה: ${e.message.slice(0, 60)}` }); }
+            return true;
+        }
+
+        // ── סטיקר ─────────────────────────────────────────────────
+        if (text.startsWith('סטיקר ')) {
+            const prompt = text.slice('סטיקר '.length).trim();
+            await sock.sendMessage(jid, { text: `🖼️ יוצר סטיקר: *${prompt}*\n⏳ כ-15 שניות...` }, { quoted: msg });
+            try {
+                const imgBuf = await generateImage(prompt);
+                if (sharp) {
+                    const webpBuf = await sharp(imgBuf).resize(512, 512, { fit: 'cover' }).webp().toBuffer();
+                    await sock.sendMessage(jid, { sticker: webpBuf }, { quoted: msg });
+                } else {
+                    await sock.sendMessage(jid, { image: imgBuf, caption: `🖼️ *${prompt}*` }, { quoted: msg });
+                }
+            } catch (e) { await sock.sendMessage(jid, { text: `❌ שגיאה ביצירת סטיקר: ${e.message.slice(0, 60)}` }); }
+            return true;
+        }
+
+        // ── משחקים ────────────────────────────────────────────────
+        if (text === 'משחקים') {
+            const cur = activeGames.get(jid);
+            const active = cur ? `\n\n🎮 *משחק פעיל:* ${cur.type === 'guess' ? 'ניחוש מספרים' : 'איקס עיגול'} (כתוב *עצור* לסיום)` : '';
+            await sock.sendMessage(jid, { text: `🎮 *משחקים זמינים:*\n\n1️⃣ *ניחוש* — ניחוש מספרים 1-100\n2️⃣ *איקס עיגול* — נגד הבוט${active}` });
+            return true;
+        }
+
+        if (text === 'ניחוש') {
+            if (activeGames.has(jid)) { await sock.sendMessage(jid, { text: '⚠️ יש כבר משחק פעיל. כתוב *עצור* קודם.' }); return true; }
+            const secret = Math.floor(Math.random() * 100) + 1;
+            activeGames.set(jid, { type: 'guess', secret, attempts: 0, playerJid: senderJid });
+            await sock.sendMessage(jid, { text: `🔢 *ניחוש מספרים!*\nבחרתי מספר בין 1 ל-100.\nשלח ניחוש! (כתוב *עצור* לסיום)` });
+            return true;
+        }
+
+        if (text === 'איקס עיגול') {
+            if (activeGames.has(jid)) { await sock.sendMessage(jid, { text: '⚠️ יש כבר משחק פעיל. כתוב *עצור* קודם.' }); return true; }
+            const board = Array(9).fill('');
+            activeGames.set(jid, { type: 'tictactoe', board, playerJid: senderJid });
+            await sock.sendMessage(jid, { text: `❌⭕ *איקס עיגול!*\nאתה ❌, הבוט ⭕\n\n${boardText(board)}\n\nשלח מספר 1-9 לבחירת מיקום` });
             return true;
         }
 
