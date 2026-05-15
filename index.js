@@ -847,7 +847,8 @@ async function startBot() {
     });
 
     sock.ev.on('group-participants.update', async ({ id, participants, action }) => {
-        try { await handleGroupParticipantUpdate(sock, id, participants, action); } catch {}
+        console.log(`👥 group-participants.update: action=${action} group=${id.slice(-10)} participants=${participants.length}`);
+        try { await handleGroupParticipantUpdate(sock, id, participants, action); } catch (e) { console.error('handleGroupParticipantUpdate error:', e.message); }
     });
 
     sock.ev.on('messages.upsert', async ({ messages, type }) => {
