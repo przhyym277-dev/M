@@ -76,7 +76,7 @@ function isCommandLocked(gid, cmdName) {
 }
 
 function getSettings(gid) {
-    if (!groupSettings.has(gid)) groupSettings.set(gid, { removeLinks: false, removeStickerMode: false, stopStickerMode: false, welcomeEnabled: false, warningThreshold: 3, linkStats: 0, linkCommandPublic: true });
+    if (!groupSettings.has(gid)) groupSettings.set(gid, { removeLinks: false, removeStickerMode: false, stopStickerMode: false, welcomeEnabled: true, warningThreshold: 3, linkStats: 0, linkCommandPublic: true });
     return groupSettings.get(gid);
 }
 
@@ -444,6 +444,7 @@ async function handleAutoModeration(sock, msg, jid, senderJid, isBotAdmin, isSen
 
 async function handleWelcome(sock, jid, participants) {
     const settings = getSettings(jid);
+    console.log(`👋 handleWelcome: jid=${jid.slice(-10)} participants=${participants.length} enabled=${settings.welcomeEnabled}`);
     if (!settings.welcomeEnabled) return;
     const template = groupWelcomeTemplates.get(jid) || null;
     for (const p of participants) {
