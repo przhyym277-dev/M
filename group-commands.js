@@ -974,13 +974,22 @@ async function handleFunCommand(sock, msg, jid, text, pushName, groupParticipant
             await sock.sendMessage(jid, { text: `🖼️ יוצר סטיקר: *${prompt}*\n⏳ כ-15 שניות...` }, { quoted: msg });
             try {
                 const imgBuf = await generateImage(prompt);
+                // Validate it's an image (not an HTML error page)
+                if (imgBuf[0] === 0x3C) throw new Error('שירות התמונות החזיר שגיאה');
+                let sent = false;
                 if (sharp) {
-                    const webpBuf = await sharp(imgBuf).resize(512, 512, { fit: 'cover' }).webp().toBuffer();
-                    await sock.sendMessage(jid, { sticker: webpBuf }, { quoted: msg });
-                } else {
-                    await sock.sendMessage(jid, { image: imgBuf, caption: `🖼️ *${prompt}*` }, { quoted: msg });
+                    try {
+                        const webpBuf = await sharp(imgBuf).resize(512, 512, { fit: 'cover' }).webp().toBuffer();
+                        await sock.sendMessage(jid, { sticker: webpBuf }, { quoted: msg });
+                        sent = true;
+                    } catch (sharpErr) {
+                        console.log('sharp failed, fallback to image:', sharpErr.message);
+                    }
                 }
-            } catch (e) { await sock.sendMessage(jid, { text: `❌ שגיאה ביצירת סטיקר: ${e.message.slice(0, 60)}` }); }
+                if (!sent) {
+                    await sock.sendMessage(jid, { image: imgBuf, caption: `🖼️ *${prompt}*\n_(נשלח כתמונה — sharp לא זמין)_` }, { quoted: msg });
+                }
+            } catch (e) { await sock.sendMessage(jid, { text: `❌ שגיאה ביצירת סטיקר: ${e.message.slice(0, 80)}` }); }
             return true;
         }
 
