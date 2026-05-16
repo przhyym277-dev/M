@@ -78,7 +78,7 @@ async function handleGroupMessage(sock, msg) {
     // ── תגובה לבוט → AI ───────────────────────────────────────
     const ctxInfo = msg.message?.extendedTextMessage?.contextInfo;
     const botPhoneNum = normJid(sock.user?.id || '').split('@')[0].replace(/\D/g, '');
-    const botLidNum   = (process.env.OWNER_LID || '').replace(/\D/g, '');
+    const botLidNum   = normJid(sock.user?.lid || process.env.OWNER_LID || '').split('@')[0].replace(/\D/g, '');
     const ctxParticipant = ctxInfo?.participant || '';
     const ctxNum      = ctxParticipant.replace(/\D/g, '');
     const isReplyToBot = ctxInfo?.fromMe === true
