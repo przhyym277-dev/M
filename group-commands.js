@@ -979,13 +979,22 @@ async function handleFunCommand(sock, msg, jid, text, pushName, groupParticipant
         // ── סטיקר ─────────────────────────────────────────────────
         if (text.startsWith('סטיקר ')) {
             const prompt = text.slice('סטיקר '.length).trim();
-            await sock.sendMessage(jid, { text: `🖼️ יוצר סטיקר: *${prompt}*\n⏳ כ-15 שניות...` }, { quoted: msg });
+            await sock.sendMessage(jid, { text: `🖼️ יוצר סטיקר: *${prompt}*\n⏳ כ-20 שניות...` }, { quoted: msg });
             try {
                 const imgBuf = await generateImage(prompt);
-                if (imgBuf[0] === 0x3C) throw new Error('שירות התמונות החזיר שגיאה');
-                // Send as image — WhatsApp lets the user convert to sticker themselves
-                await sock.sendMessage(jid, { image: imgBuf, caption: `🖼️ *${prompt}*` }, { quoted: msg });
-            } catch (e) { await sock.sendMessage(jid, { text: `❌ שגיאה ביצירת סטיקר: ${e.message.slice(0, 80)}` }); }
+                if (!imgBuf || imgBuf.length < 1000 || imgBuf[0] === 0x3C) throw new Error('שירות התמונות החזיר שגיאה');
+                if (sharp) {
+                    const webpBuf = await sharp(imgBuf)
+                        .resize(512, 512, { fit: 'contain', background: { r: 0, g: 0, b: 0, alpha: 0 } })
+                        .webp({ quality: 80 })
+                        .toBuffer();
+                    await sock.sendMessage(jid, { sticker: webpBuf }, { quoted: msg });
+                } else {
+                    await sock.sendMessage(jid, { image: imgBuf, caption: `🖼️ *${prompt}*` }, { quoted: msg });
+                }
+            } catch (e) {
+                try { await sock.sendMessage(jid, { text: `❌ שגיאה ביצירת סטיקר: ${e.message.slice(0, 80)}` }); } catch {}
+            }
             return true;
         }
 
