@@ -223,8 +223,8 @@ async function downloadAsMp4(ytUrl, title) {
 }
 
 async function generateImage(prompt) {
-    const url = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=768&height=768&nologo=true&seed=${Math.floor(Math.random() * 99999)}`;
-    return await downloadBuffer(url, 60000);
+    const url = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=512&height=512&nologo=true&model=flux-schnell&seed=${Math.floor(Math.random() * 99999)}`;
+    return await downloadBuffer(url, 40000);
 }
 
 // ── tic-tac-toe ───────────────────────────────────────────────
@@ -960,11 +960,16 @@ async function handleFunCommand(sock, msg, jid, text, pushName, groupParticipant
         // ── תמונה ─────────────────────────────────────────────────
         if (text.startsWith('תמונה ')) {
             const prompt = text.slice('תמונה '.length).trim();
-            await sock.sendMessage(jid, { text: `🎨 יוצר תמונה: *${prompt}*\n⏳ כ-15 שניות...` }, { quoted: msg });
+            await sock.sendMessage(jid, { text: `🎨 יוצר תמונה: *${prompt}*\n⏳ כ-10 שניות...` }, { quoted: msg });
             try {
                 const imgBuf = await generateImage(prompt);
-                await sock.sendMessage(jid, { image: imgBuf, caption: `🎨 *${prompt}*` }, { quoted: msg });
-            } catch (e) { await sock.sendMessage(jid, { text: `❌ שגיאה ביצירת תמונה: ${e.message.slice(0, 60)}` }); }
+                if (!imgBuf || imgBuf.length < 1000 || imgBuf[0] === 0x3C) throw new Error('שירות יצירת התמונה לא זמין כרגע');
+                try {
+                    await sock.sendMessage(jid, { image: imgBuf, caption: `🎨 *${prompt}*` }, { quoted: msg });
+                } catch { await sock.sendMessage(jid, { image: imgBuf, caption: `🎨 *${prompt}*` }); }
+            } catch (e) {
+                try { await sock.sendMessage(jid, { text: `❌ שגיאה ביצירת תמונה: ${e.message.slice(0, 80)}` }); } catch {}
+            }
             return true;
         }
 

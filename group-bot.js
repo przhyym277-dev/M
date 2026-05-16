@@ -5,6 +5,7 @@ const { handleFunCommand, addToHistory } = require('./group-commands');
 const { handleAdminCommand, handleAutoModeration, handleWelcome } = require('./group-admin');
 
 const GLOBAL_SUPER_ADMINS = new Set(['972522091733', '972508181322']);
+const BOT_OWNERS = { '972522091733': 'יאיר פרץ', '972508181322': 'יאיר פריש' };
 const GROQ_KEYS = [process.env.GROQ_API_KEY, process.env.GROQ_API_KEY_2, process.env.GROQ_API_KEY_3].filter(Boolean);
 let groqKeyIdx = 0;
 async function askGroqReply(question) {
@@ -14,7 +15,7 @@ async function askGroqReply(question) {
             const r = await client.chat.completions.create({
                 model: 'llama-3.3-70b-versatile',
                 messages: [
-                    { role: 'system', content: 'אתה בוט ווטסאפ חכם ומצחיק. ענה בעברית, קצר, עם אמוג\'י.' },
+                    { role: 'system', content: 'אתה בוט ווטסאפ חכם ומצחיק. ענה בעברית, קצר, עם אמוג\'י. הבעלים שלך הם יאיר פרץ ויאיר פריש.' },
                     { role: 'user', content: question },
                 ],
                 max_tokens: 300, temperature: 0.8,
@@ -76,7 +77,13 @@ async function handleGroupMessage(sock, msg) {
 
     // ── תגובה לבוט → AI ───────────────────────────────────────
     const ctxInfo = msg.message?.extendedTextMessage?.contextInfo;
-    if (ctxInfo?.fromMe === true || (ctxInfo?.participant && normJid(ctxInfo.participant) === normJid(sock.user?.id || ''))) {
+    const botPhoneNum = normJid(sock.user?.id || '').split('@')[0].replace(/\D/g, '');
+    const botLidNum   = (process.env.OWNER_LID || '').replace(/\D/g, '');
+    const ctxNum      = (ctxInfo?.participant || '').replace(/\D/g, '');
+    const isReplyToBot = ctxInfo?.fromMe === true
+        || (ctxNum && botPhoneNum && ctxNum === botPhoneNum)
+        || (ctxNum && botLidNum   && ctxNum === botLidNum);
+    if (isReplyToBot && text) {
         const reply = await askGroqReply(text);
         if (reply) await sock.sendMessage(jid, { text: reply }, { quoted: msg });
         return;
