@@ -983,6 +983,7 @@ async function handleFunCommand(sock, msg, jid, text, pushName, groupParticipant
             try {
                 const imgBuf = await generateImage(prompt);
                 if (!imgBuf || imgBuf.length < 1000 || imgBuf[0] === 0x3C) throw new Error('שירות התמונות החזיר שגיאה');
+                console.log(`🖼️ sticker: ${imgBuf.length}B sharp=${!!sharp}`);
                 if (sharp) {
                     const webpBuf = await sharp(imgBuf)
                         .resize(512, 512, { fit: 'contain', background: { r: 0, g: 0, b: 0, alpha: 0 } })
@@ -990,9 +991,10 @@ async function handleFunCommand(sock, msg, jid, text, pushName, groupParticipant
                         .toBuffer();
                     await sock.sendMessage(jid, { sticker: webpBuf }, { quoted: msg });
                 } else {
-                    await sock.sendMessage(jid, { image: imgBuf, caption: `🖼️ *${prompt}*` }, { quoted: msg });
+                    await sock.sendMessage(jid, { sticker: imgBuf }, { quoted: msg });
                 }
             } catch (e) {
+                console.error('sticker error:', e.message);
                 try { await sock.sendMessage(jid, { text: `❌ שגיאה ביצירת סטיקר: ${e.message.slice(0, 80)}` }); } catch {}
             }
             return true;
