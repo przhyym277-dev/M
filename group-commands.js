@@ -563,6 +563,7 @@ async function handleFunCommand(sock, msg, jid, text, pushName, groupParticipant
                     break;
                 } catch (err) {
                     if ((err.status === 429 || err.message?.includes('429')) && i < GROQ_KEYS.length - 1) { groqKeyIndex++; continue; }
+                    console.error('Groq AI error:', err.status, err.message?.slice(0, 120));
                     break;
                 }
             }
@@ -570,6 +571,8 @@ async function handleFunCommand(sock, msg, jid, text, pushName, groupParticipant
                 history.push({ role: 'assistant', content: reply });
                 if (history.length > 8) history.splice(0, history.length - 8);
                 await sock.sendMessage(jid, { text: reply });
+            } else {
+                await sock.sendMessage(jid, { text: 'מצטער, לא הצלחתי לחשוב כרגע 😅 נסה שוב' }, { quoted: msg });
             }
             return true;
         }

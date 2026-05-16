@@ -79,13 +79,20 @@ async function handleGroupMessage(sock, msg) {
     const ctxInfo = msg.message?.extendedTextMessage?.contextInfo;
     const botPhoneNum = normJid(sock.user?.id || '').split('@')[0].replace(/\D/g, '');
     const botLidNum   = (process.env.OWNER_LID || '').replace(/\D/g, '');
-    const ctxNum      = (ctxInfo?.participant || '').replace(/\D/g, '');
+    const ctxParticipant = ctxInfo?.participant || '';
+    const ctxNum      = ctxParticipant.replace(/\D/g, '');
     const isReplyToBot = ctxInfo?.fromMe === true
         || (ctxNum && botPhoneNum && ctxNum === botPhoneNum)
-        || (ctxNum && botLidNum   && ctxNum === botLidNum);
+        || (ctxNum && botLidNum   && ctxNum === botLidNum)
+        || (!!ctxInfo?.quotedMessage && !ctxParticipant);
+    console.log(`💬 reply-check: fromMe=${ctxInfo?.fromMe} participant="${ctxParticipant}" ctxNum=${ctxNum} botPhone=${botPhoneNum} botLid=${botLidNum} → isReplyToBot=${isReplyToBot}`);
     if (isReplyToBot && text) {
         const reply = await askGroqReply(text);
-        if (reply) await sock.sendMessage(jid, { text: reply }, { quoted: msg });
+        if (reply) {
+            await sock.sendMessage(jid, { text: reply }, { quoted: msg });
+        } else {
+            await sock.sendMessage(jid, { text: 'מצטער, לא הצלחתי לחשוב כרגע 😅' }, { quoted: msg });
+        }
         return;
     }
 
