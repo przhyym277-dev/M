@@ -296,6 +296,29 @@ function getTvWatchLink(imdbId) {
     return `https://vidsrc.me/embed/tv/${imdbId}`;
 }
 
+const SOCIAL_URL_RE = /https?:\/\/(www\.)?(tiktok\.com|vm\.tiktok\.com|vt\.tiktok\.com|instagram\.com\/(reel|p|tv)\/|youtube\.com\/shorts\/|youtu\.be\/)\S+/i;
+
+async function downloadSocialVideo(url) {
+    const tmpFile = path.join(os.tmpdir(), `social_${Date.now()}.mp4`);
+    try {
+        await youtubedl(url, {
+            output: tmpFile,
+            format: 'bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/best[height<=720][ext=mp4]/best[height<=720]/best',
+            mergeOutputFormat: 'mp4',
+            noWarnings: true,
+            noPlaylist: true,
+            noCheckCertificates: true,
+        });
+        if (!fs.existsSync(tmpFile)) throw new Error('קובץ לא נוצר');
+        const buf = fs.readFileSync(tmpFile);
+        fs.unlink(tmpFile, () => {});
+        return buf;
+    } catch (e) {
+        fs.unlink(tmpFile, () => {});
+        throw e;
+    }
+}
+
 async function generateImage(prompt) {
     const url = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=512&height=512&nologo=true&model=flux-schnell&seed=${Math.floor(Math.random() * 99999)}`;
     return await downloadBuffer(url, 40000);
@@ -391,7 +414,7 @@ const LOCKABLE_PREFIXES = [
     ['qr ','qr'],['QR ','qr'],['פרופיל ','פרופיל'],
     ['תמונה ','תמונה'],['סטיקר ','סטיקר'],
 ];
-const LOCKABLE_EXACT = new Set(['בדיחות','טיפ','עובדה','ציטוט','טריוויה','חידה','נכון או אמת','שידוך','רולטה','סיכום','תמלל','פרופיל','משחקים','ניחוש','איקס עיגול']);
+const LOCKABLE_EXACT = new Set(['בדיחות','טיפ','עובדה','ציטוט','טריוויה','חידה','נכון או אמת','שידוך','רולטה','סיכום','תמלל','פרופיל','משחקים','ניחוש','איקס עיגול','הורדה']);
 
 function getLockedCommandName(text) {
     if (LOCKABLE_EXACT.has(text)) return text;
@@ -460,6 +483,27 @@ async function handleFunCommand(sock, msg, jid, text, pushName, groupParticipant
                     return true;
                 }
             }
+        }
+
+        // ── הורדת TikTok / Instagram / YouTube Shorts ─────────────
+        const socialMatch = text.match(SOCIAL_URL_RE);
+        if (socialMatch) {
+            if (!isPrivate && !isPremiumEnabled(jid, 'הורדה')) return false;
+            if (!isPrivate && isCommandLocked(jid, 'הורדה')) { await sock.sendMessage(jid, { text: '🔒 הורדת סרטונים נעולה בקבוצה זו.' }); return true; }
+            const videoUrl = socialMatch[0];
+            const platform = videoUrl.includes('tiktok') ? 'TikTok' : videoUrl.includes('instagram') ? 'Instagram' : 'YouTube';
+            await sock.sendMessage(jid, { text: `⬇️ מוריד מ-${platform}...` }, { quoted: msg });
+            try {
+                const buf = await downloadSocialVideo(videoUrl);
+                if (buf.length > 60 * 1024 * 1024) {
+                    await sock.sendMessage(jid, { text: '❌ הסרטון גדול מדי (מעל 60MB)' }); return true;
+                }
+                await sock.sendMessage(jid, { video: buf, mimetype: 'video/mp4', caption: `📱 ${platform}` }, { quoted: msg });
+            } catch (e) {
+                console.error('social download error:', e.message?.slice(0, 100));
+                await sock.sendMessage(jid, { text: `❌ לא הצלחתי להוריד: ${e.message?.slice(0, 80) || 'שגיאה'}` });
+            }
+            return true;
         }
 
         // ── active game handler ────────────────────────────────────

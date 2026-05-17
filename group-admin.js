@@ -14,7 +14,7 @@ const groupWelcomeTemplates = new Map();
 const premiumSettings = new Map(); // gid → { שיר: bool, סרט: bool, תמונה: bool }
 const dailyLimits    = new Map(); // gid → { limit: N, count: N, date: 'YYYY-MM-DD' }
 
-const PREMIUM_COMMANDS = ['שיר', 'סרט', 'תמונה'];
+const PREMIUM_COMMANDS = ['שיר', 'סרט', 'תמונה', 'הורדה'];
 
 function loadSettings() {
     try {
