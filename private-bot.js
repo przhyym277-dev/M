@@ -147,26 +147,24 @@ async function handlePrivateMessage(sock, msg) {
                 await sock.sendMessage(jid, { text: results.join('\n') }); return;
             }
 
-            // 2. archive.org (should always work)
-            try {
-                const out = await youtubedl('https://archive.org/details/the_general_buster_keaton', {
-                    getUrl: true, noWarnings: true, noPlaylist: true, format: 'best'
-                });
-                const line = (out || '').toString().trim().split('\n')[0];
-                results.push(line.startsWith('http') ? `✅ archive.org: ${line.slice(0, 120)}` : `❌ archive.org: פלט="${line.slice(0,80)}"`);
-            } catch (e) {
-                results.push(`❌ archive.org error: ${e.message?.slice(0, 150)}\nstderr: ${e.stderr?.slice(0, 150)}`);
-            }
-
-            // 3. vidsrc.to
-            try {
-                const out = await youtubedl('https://vidsrc.to/embed/movie/tt1375666', {
-                    getUrl: true, noWarnings: true, noPlaylist: true, format: 'best[height<=480]/best'
-                });
-                const line = (out || '').toString().trim().split('\n')[0];
-                results.push(line.startsWith('http') ? `✅ vidsrc.to: ${line.slice(0, 120)}` : `❌ vidsrc.to: "${line.slice(0,80)}"`);
-            } catch (e) {
-                results.push(`❌ vidsrc.to: ${e.message?.slice(0, 100)}`);
+            // test sources
+            const testSources = [
+                { name: 'archive.org (Night of the Living Dead)', url: 'https://archive.org/details/Night_of_the_Living_Dead_1968' },
+                { name: 'archive.org (Metropolis 1927)',          url: 'https://archive.org/details/Metropolis_1927' },
+                { name: 'vidsrc.xyz',   url: 'https://vidsrc.xyz/embed/movie/tt1375666' },
+                { name: 'vidsrc.cc',    url: 'https://vidsrc.cc/v2/embed/movie/tt1375666' },
+                { name: 'cineb.rs',     url: 'https://cineb.rs/movie/watch-inception-tt1375666.html' },
+                { name: 'autoembed',    url: 'https://player.autoembed.cc/embed/movie/tt1375666' },
+            ];
+            for (const s of testSources) {
+                try {
+                    const out = await youtubedl(s.url, { getUrl: true, noWarnings: true, noPlaylist: true, format: 'best[height<=480]/best' });
+                    const line = (out || '').toString().trim().split('\n')[0];
+                    results.push(line.startsWith('http') ? `✅ ${s.name}:\n${line.slice(0, 120)}` : `❌ ${s.name}: "${line.slice(0, 80)}"`);
+                } catch (e) {
+                    const err = (e.stderr || e.message || '').slice(0, 100);
+                    results.push(`❌ ${s.name}:\n${err}`);
+                }
             }
 
             await sock.sendMessage(jid, { text: results.join('\n\n') }); return;
