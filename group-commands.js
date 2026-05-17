@@ -288,6 +288,35 @@ async function downloadAsMp4(url, title) {
     return { buffer, title: info.videoDetails.title || title };
 }
 
+async function getTorrentLinks(imdbId) {
+    try {
+        const res = await downloadBuffer(`https://torrentio.strem.fun/stream/movie/${imdbId}.json`, 15000);
+        const data = JSON.parse(res.toString());
+        const streams = (data.streams || []).filter(s => s.url?.startsWith('magnet:') || s.infoHash);
+        const parsed = streams.map(s => {
+            const lines = (s.title || '').split('\n');
+            const titleLine = lines[0] || '';
+            const infoLine = lines[1] || '';
+            const sizeMatch = infoLine.match(/💾\s*([\d.]+\s*G?B)/i);
+            const size = sizeMatch ? sizeMatch[1].trim() : '';
+            let quality = 'HD';
+            if (/2160p|4k/i.test(titleLine)) quality = '4K';
+            else if (/1080p/i.test(titleLine)) quality = '1080p';
+            else if (/720p/i.test(titleLine)) quality = '720p';
+            else if (/480p/i.test(titleLine)) quality = '480p';
+            const magnet = s.infoHash
+                ? `magnet:?xt=urn:btih:${s.infoHash}&dn=${encodeURIComponent(titleLine.slice(0,60))}`
+                : s.url;
+            return { quality, size, magnet };
+        });
+        const seen = new Set();
+        return parsed.filter(s => { if (seen.has(s.quality)) return false; seen.add(s.quality); return true; }).slice(0, 4);
+    } catch (e) {
+        console.error('Torrentio error:', e.message);
+        return [];
+    }
+}
+
 async function generateImage(prompt) {
     const url = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=512&height=512&nologo=true&model=flux-schnell&seed=${Math.floor(Math.random() * 99999)}`;
     return await downloadBuffer(url, 40000);
@@ -416,11 +445,21 @@ async function handleFunCommand(sock, msg, jid, text, pushName, groupParticipant
                         const imdbId = imdbData.imdb_id;
                         const year = m.release_date ? m.release_date.slice(0, 4) : '';
                         const rating = m.vote_average ? `⭐ ${m.vote_average.toFixed(1)}/10` : '';
-                        const watchLink = imdbId ? `https://vidsrc.to/embed/movie/${imdbId}` : null;
                         let replyText = `🎬 *${m.title}*${year ? ` (${year})` : ''}\n${rating}`;
                         if (m.overview) replyText += `\n\n📖 ${m.overview.slice(0, 200)}`;
-                        if (watchLink) replyText += `\n\n▶️ *לצפייה (פתח בדפדפן):*\n${watchLink}`;
                         await sock.sendMessage(jid, { text: replyText }, { quoted: msg });
+                        if (imdbId) {
+                            const torrents = await getTorrentLinks(imdbId);
+                            if (torrents.length) {
+                                let torrentText = `🔗 *קישורי הורדה - ${m.title}:*\n📲 לחץ → נפתח בתוכנת הטורנטים\n`;
+                                for (const t of torrents) {
+                                    torrentText += `\n*${t.quality}*${t.size ? ` (${t.size})` : ''}:\n${t.magnet}\n`;
+                                }
+                                await sock.sendMessage(jid, { text: torrentText });
+                            } else {
+                                await sock.sendMessage(jid, { text: '⚠️ לא נמצאו קישורי הורדה לסרט זה' });
+                            }
+                        }
                     } catch (e) {
                         await sock.sendMessage(jid, { text: `❌ שגיאה: ${e.message?.slice(0, 60)}` });
                     }
@@ -1059,11 +1098,21 @@ async function handleFunCommand(sock, msg, jid, text, pushName, groupParticipant
                     const imdbId = imdbData.imdb_id;
                     const year = m.release_date ? m.release_date.slice(0, 4) : '';
                     const rating = m.vote_average ? `⭐ ${m.vote_average.toFixed(1)}/10` : '';
-                    const stremioLink = imdbId ? `https://web.strem.io/#/detail/movie/${imdbId}` : null;
                     let replyText = `🎬 *${m.title}*${year ? ` (${year})` : ''}\n${rating}`;
                     if (m.overview) replyText += `\n\n📖 ${m.overview.slice(0, 200)}`;
-                    if (stremioLink) replyText += `\n\n▶️ *צפה ב-Stremio:*\n${stremioLink}`;
                     await sock.sendMessage(jid, { text: replyText }, { quoted: msg });
+                    if (imdbId) {
+                        const torrents = await getTorrentLinks(imdbId);
+                        if (torrents.length) {
+                            let torrentText = `🔗 *קישורי הורדה - ${m.title}:*\n📲 לחץ → נפתח בתוכנת הטורנטים\n`;
+                            for (const t of torrents) {
+                                torrentText += `\n*${t.quality}*${t.size ? ` (${t.size})` : ''}:\n${t.magnet}\n`;
+                            }
+                            await sock.sendMessage(jid, { text: torrentText });
+                        } else {
+                            await sock.sendMessage(jid, { text: '⚠️ לא נמצאו קישורי הורדה לסרט זה' });
+                        }
+                    }
                 } else {
                     const moviesList = movies.map((m, i) => `${i + 1}. *${m.title}* ${m.release_date ? `(${m.release_date.slice(0,4)})` : ''}`).join('\n');
                     await sock.sendMessage(jid, { text: `🎬 *נמצאו כמה סרטים:*\n\n${moviesList}\n\nשלח מספר 1-${movies.length} לבחירה` }, { quoted: msg });
