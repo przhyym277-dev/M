@@ -416,10 +416,10 @@ async function handleFunCommand(sock, msg, jid, text, pushName, groupParticipant
                         const imdbId = imdbData.imdb_id;
                         const year = m.release_date ? m.release_date.slice(0, 4) : '';
                         const rating = m.vote_average ? `⭐ ${m.vote_average.toFixed(1)}/10` : '';
-                        const stremioLink = imdbId ? `https://web.strem.io/#/detail/movie/${imdbId}` : null;
+                        const watchLink = imdbId ? `https://vidsrc.to/embed/movie/${imdbId}` : null;
                         let replyText = `🎬 *${m.title}*${year ? ` (${year})` : ''}\n${rating}`;
                         if (m.overview) replyText += `\n\n📖 ${m.overview.slice(0, 200)}`;
-                        if (stremioLink) replyText += `\n\n▶️ *צפה ב-Stremio:*\n${stremioLink}`;
+                        if (watchLink) replyText += `\n\n▶️ *לצפייה (פתח בדפדפן):*\n${watchLink}`;
                         await sock.sendMessage(jid, { text: replyText }, { quoted: msg });
                     } catch (e) {
                         await sock.sendMessage(jid, { text: `❌ שגיאה: ${e.message?.slice(0, 60)}` });
