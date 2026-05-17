@@ -399,20 +399,27 @@ async function handleFunCommand(sock, msg, jid, text, pushName, groupParticipant
         // ── pending multi-step actions ─────────────────────────────
         const pendingKey = `${jid}:${senderJid}`;
         const pending = pendingUserActions.get(pendingKey);
+        console.log(`🔑 pending check: key="${pendingKey.slice(-30)}" found=${!!pending} text="${text.slice(0,20)}"`);
         if (pending) {
-            if (Date.now() > pending.expiresAt) { pendingUserActions.delete(pendingKey); }
+            const expired = Date.now() > pending.expiresAt;
+            console.log(`⏳ pending: type=${pending.type} expired=${expired} results=${pending.results?.length}`);
+            if (expired) { pendingUserActions.delete(pendingKey); }
             else if (pending.type === 'song_results') {
                 const n = parseInt(text.trim(), 10);
+                console.log(`🎵 song pick attempt: n=${n} max=${pending.results?.length} valid=${!isNaN(n) && n >= 1 && n <= pending.results.length}`);
                 if (!isNaN(n) && n >= 1 && n <= pending.results.length) {
                     const chosen = pending.results[n - 1];
                     pendingUserActions.delete(pendingKey);
                     await sock.sendMessage(jid, { text: `⬇️ מוריד *${chosen.title}*...` }, { quoted: msg });
                     try {
+                        console.log(`⬇️ downloadAsMp3 start: url=${chosen.url.slice(0, 60)}`);
                         const { buffer, title, mimetype } = await downloadAsMp3(chosen.url, chosen.title);
+                        console.log(`✅ downloadAsMp3 done: ${Math.round(buffer.length/1024)}KB mime=${mimetype}`);
                         if (buffer.length > 20 * 1024 * 1024) { await sock.sendMessage(jid, { text: '❌ הקובץ גדול מדי' }); return true; }
                         await sock.sendMessage(jid, { audio: buffer, mimetype, ptt: false }, { quoted: msg });
                         await sock.sendMessage(jid, { text: `🎵 *${title}*` });
                     } catch (e) {
+                        console.error(`❌ downloadAsMp3 error: ${e.message}`);
                         await sock.sendMessage(jid, { text: `❌ שגיאה בהורדה: ${e.message?.slice(0, 80) || 'שגיאה'}` });
                     }
                     return true;
