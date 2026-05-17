@@ -181,37 +181,29 @@ function formatDuration(secs) {
     return `${Math.floor(secs / 60)}:${String(Math.floor(secs % 60)).padStart(2, '0')}`;
 }
 
-const SEARCH_OPTS = {
-    noWarnings: true,
-    noCheckCertificates: true,
-    jsRuntimes: `node:${process.execPath}`,
-    dumpSingleJson: true,
-    flatPlaylist: true,
-};
-
 async function searchTracks(query) {
-    const cleaned = cleanQuery(query);
-    // SoundCloud search (scsearch3 — proven to work)
+    // SoundCloud via play-dl (no yt-dlp needed)
     try {
-        const data = await youtubedl(`scsearch3:${cleaned}`, SEARCH_OPTS);
-        const entries = data?.entries?.length ? data.entries : (data?.id ? [data] : []);
-        if (entries.length) {
-            console.log(`✅ SC search: ${entries.length} results`);
-            return entries.map(e => ({
-                title: e.title || 'ללא שם',
-                duration: formatDuration(e.duration),
-                url: e.url || e.webpage_url,
+        const results = await playdl.search(query, { source: { soundcloud: 'tracks' }, limit: 5 });
+        if (results.length) {
+            console.log(`✅ play-dl SC: ${results.length} results`);
+            return results.map(r => ({
+                title: r.name || 'ללא שם',
+                duration: r.durationInSec ? formatDuration(r.durationInSec) : '',
+                url: r.url,
                 source: 'sc',
             }));
         }
     } catch (err) {
-        console.error('SC search error:', err.message?.slice(0, 120));
+        console.error('play-dl SC search error:', String(err).slice(0, 120));
     }
-    // YouTube fallback
+    // YouTube fallback via yt-dlp
     try {
         const data = await youtubedl(`ytsearch5:${query}`, {
-            ...SEARCH_OPTS,
+            noWarnings: true, noCheckCertificates: true,
+            jsRuntimes: `node:${process.execPath}`,
             extractorArgs: 'youtube:player_client=tv_embedded,android',
+            dumpSingleJson: true, flatPlaylist: true,
         });
         const entries = (data?.entries || []).filter(e => e.id).slice(0, 5);
         console.log(`✅ YT search: ${entries.length} results`);
@@ -222,7 +214,7 @@ async function searchTracks(query) {
             source: 'yt',
         }));
     } catch (err) {
-        console.error('YT search error:', err.message?.slice(0, 120));
+        console.error('YT search error:', String(err).slice(0, 120));
         return [];
     }
 }
