@@ -327,6 +327,33 @@ function getBotMove(board) {
     return -1;
 }
 
+// ── Connect 4 ─────────────────────────────────────────────────
+const C4_ROWS = 6, C4_COLS = 7;
+const C4_COL_HDR = ['1️⃣','2️⃣','3️⃣','4️⃣','5️⃣','6️⃣','7️⃣'].join('');
+function c4New() { return Array.from({length: C4_ROWS}, () => Array(C4_COLS).fill(0)); }
+function c4Text(b) {
+    return C4_COL_HDR + '\n' + b.map(r => r.map(c => c===0?'⚫':c===1?'🔴':'🟡').join('')).join('\n');
+}
+function c4Drop(b, col, p) {
+    for (let r = C4_ROWS-1; r >= 0; r--) { if (b[r][col]===0) { b[r][col]=p; return r; } }
+    return -1;
+}
+function c4Win(b, p) {
+    for (let r=0;r<C4_ROWS;r++) for (let c=0;c<=C4_COLS-4;c++) if ([0,1,2,3].every(i=>b[r][c+i]===p)) return true;
+    for (let r=0;r<=C4_ROWS-4;r++) for (let c=0;c<C4_COLS;c++) if ([0,1,2,3].every(i=>b[r+i][c]===p)) return true;
+    for (let r=0;r<=C4_ROWS-4;r++) for (let c=0;c<=C4_COLS-4;c++) if ([0,1,2,3].every(i=>b[r+i][c+i]===p)) return true;
+    for (let r=0;r<=C4_ROWS-4;r++) for (let c=3;c<C4_COLS;c++) if ([0,1,2,3].every(i=>b[r+i][c-i]===p)) return true;
+    return false;
+}
+function c4Full(b) { return b[0].every(c=>c!==0); }
+function c4BotMove(b) {
+    const valid = Array.from({length:C4_COLS},(_,i)=>i).filter(c=>b[0][c]===0);
+    for (const c of valid) { const t=b.map(r=>[...r]); c4Drop(t,c,2); if(c4Win(t,2)) return c; }
+    for (const c of valid) { const t=b.map(r=>[...r]); c4Drop(t,c,1); if(c4Win(t,1)) return c; }
+    for (const c of [3,2,4,1,5,0,6]) if (valid.includes(c)) return c;
+    return valid[0];
+}
+
 const GROQ_KEYS = [process.env.GROQ_API_KEY, process.env.GROQ_API_KEY_2, process.env.GROQ_API_KEY_3].filter(Boolean);
 let groqKeyIndex = 0;
 function getGroqClient() { return new Groq({ apiKey: GROQ_KEYS[groqKeyIndex % GROQ_KEYS.length] }); }
@@ -509,6 +536,35 @@ async function handleFunCommand(sock, msg, jid, text, pushName, groupParticipant
                     }
                     await sock.sendMessage(jid, { text: `${boardText(game.board)}\n\n✍️ תורך — שלח מספר 1-9` }, { quoted: msg });
                     return true;
+                }
+                if (text.trim() === 'עצור') { activeGames.delete(jid); await sock.sendMessage(jid, { text: '🛑 המשחק הופסק.' }); return true; }
+            }
+            if (game.type === 'connect4' && game.playerJid === senderJid) {
+                const col = parseInt(text.trim(), 10) - 1;
+                if (!isNaN(col) && col >= 0 && col < C4_COLS) {
+                    if (game.board[0][col] !== 0) {
+                        await sock.sendMessage(jid, { text: '⚠️ עמודה מלאה, בחר עמודה אחרת.' }, { quoted: msg }); return true;
+                    }
+                    c4Drop(game.board, col, 1);
+                    if (c4Win(game.board, 1)) {
+                        activeGames.delete(jid);
+                        await sock.sendMessage(jid, { text: `${c4Text(game.board)}\n\n🏆 *ניצחת! 4 בשורה!* כל הכבוד 🔴` }, { quoted: msg }); return true;
+                    }
+                    if (c4Full(game.board)) {
+                        activeGames.delete(jid);
+                        await sock.sendMessage(jid, { text: `${c4Text(game.board)}\n\n🤝 *תיקו!*` }, { quoted: msg }); return true;
+                    }
+                    const botCol = c4BotMove(game.board);
+                    c4Drop(game.board, botCol, 2);
+                    if (c4Win(game.board, 2)) {
+                        activeGames.delete(jid);
+                        await sock.sendMessage(jid, { text: `${c4Text(game.board)}\n\n🤖 *הבוט ניצח!* נסה שוב 🟡` }, { quoted: msg }); return true;
+                    }
+                    if (c4Full(game.board)) {
+                        activeGames.delete(jid);
+                        await sock.sendMessage(jid, { text: `${c4Text(game.board)}\n\n🤝 *תיקו!*` }, { quoted: msg }); return true;
+                    }
+                    await sock.sendMessage(jid, { text: `${c4Text(game.board)}\n\n✍️ תורך 🔴 — בחר עמודה 1-7` }, { quoted: msg }); return true;
                 }
                 if (text.trim() === 'עצור') { activeGames.delete(jid); await sock.sendMessage(jid, { text: '🛑 המשחק הופסק.' }); return true; }
             }
@@ -1119,8 +1175,9 @@ async function handleFunCommand(sock, msg, jid, text, pushName, groupParticipant
         // ── משחקים ────────────────────────────────────────────────
         if (text === 'משחקים') {
             const cur = activeGames.get(jid);
-            const active = cur ? `\n\n🎮 *משחק פעיל:* ${cur.type === 'guess' ? 'ניחוש מספרים' : 'איקס עיגול'} (כתוב *עצור* לסיום)` : '';
-            await sock.sendMessage(jid, { text: `🎮 *משחקים זמינים:*\n\n1️⃣ *ניחוש* — ניחוש מספרים 1-100\n2️⃣ *איקס עיגול* — נגד הבוט${active}` });
+            const activeNames = { guess: 'ניחוש מספרים', tictactoe: 'איקס עיגול', connect4: '4 בשורה' };
+            const active = cur ? `\n\n🎮 *משחק פעיל:* ${activeNames[cur.type] || cur.type} (כתוב *עצור* לסיום)` : '';
+            await sock.sendMessage(jid, { text: `🎮 *משחקים זמינים:*\n\n1️⃣ *ניחוש* — ניחוש מספרים 1-100\n2️⃣ *איקס עיגול* — נגד הבוט\n3️⃣ *4 בשורה* — נגד הבוט${active}` });
             return true;
         }
 
@@ -1137,6 +1194,14 @@ async function handleFunCommand(sock, msg, jid, text, pushName, groupParticipant
             const board = Array(9).fill('');
             activeGames.set(jid, { type: 'tictactoe', board, playerJid: senderJid });
             await sock.sendMessage(jid, { text: `❌⭕ *איקס עיגול!*\nאתה ❌, הבוט ⭕\n\n${boardText(board)}\n\nשלח מספר 1-9 לבחירת מיקום` });
+            return true;
+        }
+
+        if (text === '4 בשורה') {
+            if (activeGames.has(jid)) { await sock.sendMessage(jid, { text: '⚠️ יש כבר משחק פעיל. כתוב *עצור* קודם.' }); return true; }
+            const board = c4New();
+            activeGames.set(jid, { type: 'connect4', board, playerJid: senderJid });
+            await sock.sendMessage(jid, { text: `🔴🟡 *4 בשורה!*\nאתה 🔴, הבוט 🟡\n\n${c4Text(board)}\n\nשלח מספר עמודה 1-7 (כתוב *עצור* לסיום)` });
             return true;
         }
 
