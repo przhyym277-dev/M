@@ -133,6 +133,35 @@ async function handlePrivateMessage(sock, msg) {
             saveSettings();
             await sock.sendMessage(jid, { text: `✅ +${phone} נוסף לרשימה המורשים.\nמצב: רשימה לבנה (${privateWhitelist.size} אנשים)` }); return;
         }
+        if (text === 'בדיקת filemoon') {
+            await sock.sendMessage(jid, { text: '🔍 בודק FileMoon API...' });
+            const https = require('https');
+            function fetchUrl(url, timeoutMs = 10000) {
+                return new Promise(resolve => {
+                    const req = https.get(url, { headers: { 'User-Agent': 'Mozilla/5.0' }, timeout: timeoutMs }, res => {
+                        let body = '';
+                        res.on('data', c => { if (body.length < 2000) body += c.toString(); });
+                        res.on('end', () => resolve({ status: res.statusCode, body, location: res.headers.location }));
+                    });
+                    req.on('error', e => resolve({ status: 0, body: '', error: e.message }));
+                    req.on('timeout', () => { req.destroy(); resolve({ status: 0, body: '', error: 'timeout' }); });
+                });
+            }
+            const tests = [
+                { name: 'API בסיס',       url: 'https://filemoon.sx/api' },
+                { name: 'חיפוש inception', url: 'https://filemoon.sx/api/file/search?name=inception' },
+                { name: 'חיפוש movie',    url: 'https://filemoon.sx/api/search?q=inception' },
+                { name: 'רשימת קבצים',    url: 'https://filemoon.sx/api/file/list' },
+                { name: 'embed link',     url: 'https://filemoon.sx/e/inception' },
+            ];
+            const lines = [];
+            for (const t of tests) {
+                const r = await fetchUrl(t.url);
+                const preview = r.body?.slice(0, 150).replace(/\n/g, ' ') || r.error || '';
+                lines.push(`*${t.name}* [${r.status}]\n${preview}`);
+            }
+            await sock.sendMessage(jid, { text: `📋 *FileMoon בדיקה:*\n\n${lines.join('\n\n')}` }); return;
+        }
         if (text === 'בדיקת מקורות') {
             await sock.sendMessage(jid, { text: '🔍 בודק מקורות הורדה מ-Render... (30 שניות)' });
             const https = require('https');
