@@ -219,9 +219,33 @@ async function searchTracks(query) {
     }
 }
 
-async function downloadAsMp3(ytUrl, title) {
+async function streamToBuffer(readable) {
+    return new Promise((resolve, reject) => {
+        const chunks = [];
+        readable.on('data', c => chunks.push(c));
+        readable.on('end', () => resolve(Buffer.concat(chunks)));
+        readable.on('error', reject);
+    });
+}
+
+async function downloadAsMp3(url, title) {
+    // SoundCloud URL → stream via play-dl
+    if (url.includes('soundcloud.com')) {
+        try {
+            const streamObj = await playdl.stream(url);
+            const buffer = await streamToBuffer(streamObj.stream);
+            if (buffer.length > 500) {
+                console.log(`✅ play-dl download: ${Math.round(buffer.length/1024)}KB type=${streamObj.type}`);
+                const mimetype = streamObj.type === 'ogg/opus' ? 'audio/ogg' : 'audio/mpeg';
+                return { buffer, title, mimetype };
+            }
+        } catch (err) {
+            console.error('play-dl stream error:', String(err).slice(0, 120));
+        }
+    }
+    // yt-dlp fallback
     try { return await downloadFromSoundCloud(cleanQuery(title)); } catch {}
-    const info = await youtubedl(ytUrl, {
+    const info = await youtubedl(url, {
         ...YTDL_COMMON, dumpSingleJson: true,
         format: 'bestaudio[ext=m4a]/bestaudio[ext=webm]/bestaudio', noPlaylist: true,
     });
