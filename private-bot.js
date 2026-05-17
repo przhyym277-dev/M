@@ -134,30 +134,42 @@ async function handlePrivateMessage(sock, msg) {
             await sock.sendMessage(jid, { text: `✅ +${phone} נוסף לרשימה המורשים.\nמצב: רשימה לבנה (${privateWhitelist.size} אנשים)` }); return;
         }
         if (text.toLowerCase().includes('בדיקת הורדה')) {
-            await sock.sendMessage(jid, { text: '🔍 בודק מקורות עם youtube-dl-exec...' });
+            await sock.sendMessage(jid, { text: '🔍 בודק...' });
             const youtubedl = require('youtube-dl-exec');
-            const sources = [
-                { name: 'vidsrc.to',    url: 'https://vidsrc.to/embed/movie/tt1375666' },
-                { name: 'multiembed',   url: 'https://multiembed.mov/?video_id=tt1375666&tmdb=1' },
-                { name: '2embed',       url: 'https://www.2embed.cc/embed/tt1375666' },
-                { name: 'smashystream', url: 'https://embed.smashystream.com/playere.php?imdb=tt1375666' },
-                { name: 'archive.org',  url: 'https://archive.org/details/the_general_buster_keaton' },
-            ];
-            const tryGetUrl = async (url) => {
-                try {
-                    const out = await youtubedl(url, { getUrl: true, noWarnings: true, noPlaylist: true, format: 'best[height<=480]/best' });
-                    const line = (out || '').trim().split('\n')[0];
-                    return { ok: line.startsWith('http'), url: line.slice(0, 150) };
-                } catch (e) {
-                    return { ok: false, err: e.message?.slice(0, 100) };
-                }
-            };
-            const lines = [];
-            for (const s of sources) {
-                const r = await tryGetUrl(s.url);
-                lines.push(`${r.ok ? '✅' : '❌'} *${s.name}*${r.ok ? `\n${r.url}` : `\n${r.err || 'אין פלט'}`}`);
+            const results = [];
+
+            // 1. version check
+            try {
+                const ver = await youtubedl.exec('--version', {});
+                results.push(`✅ yt-dlp גרסה: ${(ver?.stdout || '').trim().slice(0, 30)}`);
+            } catch (e) {
+                results.push(`❌ yt-dlp לא עובד: ${e.message?.slice(0, 100)}`);
+                await sock.sendMessage(jid, { text: results.join('\n') }); return;
             }
-            await sock.sendMessage(jid, { text: `📊 *תוצאות:*\n\n${lines.join('\n\n')}` }); return;
+
+            // 2. archive.org (should always work)
+            try {
+                const out = await youtubedl('https://archive.org/details/the_general_buster_keaton', {
+                    getUrl: true, noWarnings: true, noPlaylist: true, format: 'best'
+                });
+                const line = (out || '').toString().trim().split('\n')[0];
+                results.push(line.startsWith('http') ? `✅ archive.org: ${line.slice(0, 120)}` : `❌ archive.org: פלט="${line.slice(0,80)}"`);
+            } catch (e) {
+                results.push(`❌ archive.org error: ${e.message?.slice(0, 150)}\nstderr: ${e.stderr?.slice(0, 150)}`);
+            }
+
+            // 3. vidsrc.to
+            try {
+                const out = await youtubedl('https://vidsrc.to/embed/movie/tt1375666', {
+                    getUrl: true, noWarnings: true, noPlaylist: true, format: 'best[height<=480]/best'
+                });
+                const line = (out || '').toString().trim().split('\n')[0];
+                results.push(line.startsWith('http') ? `✅ vidsrc.to: ${line.slice(0, 120)}` : `❌ vidsrc.to: "${line.slice(0,80)}"`);
+            } catch (e) {
+                results.push(`❌ vidsrc.to: ${e.message?.slice(0, 100)}`);
+            }
+
+            await sock.sendMessage(jid, { text: results.join('\n\n') }); return;
         }
         if (text.toLowerCase().includes('filemoon')) {
             await sock.sendMessage(jid, { text: '🔍 בודק FileMoon API...' });
