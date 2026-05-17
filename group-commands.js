@@ -256,41 +256,36 @@ async function downloadAsMp3(url, title) {
 }
 
 async function downloadAsMp4(url, title) {
-    // SoundCloud has no video — search YouTube by title
+    const ytdl = require('@distube/ytdl-core');
+    const ytsr = require('ytsr');
+
+    // SoundCloud → search YouTube by title
     if (url.includes('soundcloud.com')) {
-        console.log(`🎬 SC→YT MP4 search: "${cleanQuery(title)}"`);
-        let search;
+        console.log(`🎬 ytsr search: "${cleanQuery(title)}"`);
         try {
-            search = await youtubedl(`ytsearch1:${cleanQuery(title)}`, {
-                noWarnings: true, noCheckCertificates: true,
-                jsRuntimes: `node:${process.execPath}`,
-                extractorArgs: 'youtube:player_client=tv_embedded,android',
-                dumpSingleJson: true, flatPlaylist: true,
-            });
+            const res = await ytsr(cleanQuery(title), { limit: 5 });
+            const video = res.items.find(i => i.type === 'video' && !i.isLive);
+            if (!video?.url) throw new Error('לא נמצא');
+            url = video.url;
+            console.log(`✅ ytsr: "${video.title}"`);
         } catch (e) {
-            console.error('YT search err:', e.message || '', e.stderr?.slice(0, 150) || '');
-            throw new Error('חיפוש YouTube נכשל');
+            console.error('ytsr error:', e.message);
+            throw new Error('לא נמצא סרטון YouTube');
         }
-        const entry = search?.entries?.[0];
-        if (!entry?.id) throw new Error('לא נמצא סרטון ב-YouTube');
-        url = `https://www.youtube.com/watch?v=${entry.id}`;
-        console.log(`✅ YT found: "${entry.title}"`);
     }
-    let info;
-    try {
-        info = await youtubedl(url, {
-            ...YTDL_COMMON, dumpSingleJson: true,
-            format: 'best[ext=mp4][height<=480]/best[ext=mp4]/best', noPlaylist: true,
-        });
-    } catch (e) {
-        console.error('YT download err:', e.message || '', e.stderr?.slice(0, 150) || '');
-        throw new Error('הורדת YouTube נכשלה');
-    }
-    if (!info?.url) throw new Error('לא ניתן להוריד');
-    if ((info.duration || 0) > 600) throw new Error('הוידאו ארוך מדי (מקסימום 10 דקות)');
-    const buffer = await downloadBuffer(info.url, 90000);
+
+    console.log(`⬇️ ytdl-core: ${url}`);
+    const info = await ytdl.getInfo(url);
+    const secs = parseInt(info.videoDetails.lengthSeconds || 0);
+    if (secs > 600) throw new Error('הוידאו ארוך מדי (מקסימום 10 דקות)');
+
+    const format = ytdl.chooseFormat(info.formats, { quality: 'highest', filter: 'videoandaudio' });
+    if (!format?.url) throw new Error('לא נמצא פורמט מתאים');
+
+    const buffer = await downloadBuffer(format.url, 90000);
     if (buffer.length > 50 * 1024 * 1024) throw new Error('הקובץ גדול מדי (מעל 50MB)');
-    return { buffer, title: info.title || title };
+    console.log(`✅ mp4: ${Math.round(buffer.length/1024/1024)}MB`);
+    return { buffer, title: info.videoDetails.title || title };
 }
 
 async function generateImage(prompt) {
