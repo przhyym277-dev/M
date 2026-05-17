@@ -255,8 +255,22 @@ async function downloadAsMp3(url, title) {
     return { buffer, title: info.title || title, mimetype: info.ext === 'webm' ? 'audio/ogg' : 'audio/mp4' };
 }
 
-async function downloadAsMp4(ytUrl, title) {
-    const info = await youtubedl(ytUrl, {
+async function downloadAsMp4(url, title) {
+    // SoundCloud has no video — search YouTube by title
+    if (url.includes('soundcloud.com')) {
+        console.log(`🎬 SC→YT MP4 search: "${cleanQuery(title)}"`);
+        const search = await youtubedl(`ytsearch1:${cleanQuery(title)}`, {
+            noWarnings: true, noCheckCertificates: true,
+            jsRuntimes: `node:${process.execPath}`,
+            extractorArgs: 'youtube:player_client=tv_embedded,android',
+            dumpSingleJson: true, flatPlaylist: true,
+        });
+        const entry = search?.entries?.[0];
+        if (!entry?.id) throw new Error('לא נמצא סרטון ב-YouTube');
+        url = `https://www.youtube.com/watch?v=${entry.id}`;
+        console.log(`✅ YT found: "${entry.title}"`);
+    }
+    const info = await youtubedl(url, {
         ...YTDL_COMMON, dumpSingleJson: true,
         format: 'best[ext=mp4][height<=480]/best[ext=mp4]/best', noPlaylist: true,
     });
