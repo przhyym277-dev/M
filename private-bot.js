@@ -134,59 +134,28 @@ async function handlePrivateMessage(sock, msg) {
             await sock.sendMessage(jid, { text: `✅ +${phone} נוסף לרשימה המורשים.\nמצב: רשימה לבנה (${privateWhitelist.size} אנשים)` }); return;
         }
         if (text.toLowerCase().includes('בדיקת הורדה')) {
-            await sock.sendMessage(jid, { text: '🎬 מנסה להוריד Inception דרך yt-dlp... (עד 3 דקות)' });
+            await sock.sendMessage(jid, { text: '🔍 בודק איזה מקור yt-dlp יכול לחלץ ממנו...' });
             const { execFile } = require('child_process');
-            const fs = require('fs');
-            const path = require('path');
-            const https = require('https');
-            const http = require('http');
-
-            // Step 1: try yt-dlp --get-url on vidsrc.me
-            const vidsrcUrl = 'https://vidsrc.me/embed/movie/tt1375666';
-            const getUrlResult = await new Promise(resolve => {
-                execFile('yt-dlp', ['--get-url', '--no-warnings', '-f', 'bestvideo[height<=480]+bestaudio/best[height<=480]/best', vidsrcUrl], { timeout: 30000 }, (err, stdout, stderr) => {
-                    resolve({ ok: !err, out: stdout?.trim()?.slice(0, 300), err: stderr?.trim()?.slice(0, 200) });
-                });
+            const sources = [
+                { name: 'vidsrc.to',      url: 'https://vidsrc.to/embed/movie/tt1375666' },
+                { name: 'multiembed',     url: 'https://multiembed.mov/?video_id=tt1375666&tmdb=1' },
+                { name: '2embed',         url: 'https://www.2embed.cc/embed/tt1375666' },
+                { name: 'smashystream',   url: 'https://embed.smashystream.com/playere.php?imdb=tt1375666' },
+                { name: 'archive.org',    url: 'https://archive.org/details/the_general_buster_keaton' },
+            ];
+            const tryGetUrl = (url) => new Promise(resolve => {
+                execFile('yt-dlp', ['--get-url', '--no-warnings', '--no-playlist', '-f', 'best[height<=480]/best', url],
+                    { timeout: 20000 }, (err, stdout, stderr) => {
+                        const out = stdout?.trim();
+                        resolve({ ok: !!out && out.startsWith('http'), url: out?.slice(0, 150), err: stderr?.trim()?.slice(0, 100) });
+                    });
             });
-            if (!getUrlResult.ok || !getUrlResult.out) {
-                await sock.sendMessage(jid, { text: `❌ yt-dlp לא הצליח לחלץ URL מ-vidsrc.me:\n${getUrlResult.err || 'אין פלט'}` }); return;
+            const lines = [];
+            for (const s of sources) {
+                const r = await tryGetUrl(s.url);
+                lines.push(`${r.ok ? '✅' : '❌'} *${s.name}*${r.ok ? `\n${r.url}` : `\n${r.err || 'אין פלט'}`}`);
             }
-            await sock.sendMessage(jid, { text: `✅ חולץ URL:\n${getUrlResult.out.slice(0, 200)}\n\n⬇️ מוריד...` });
-
-            // Step 2: download to temp file
-            const tmpFile = path.join(require('os').tmpdir(), 'test_movie.mp4');
-            const dlResult = await new Promise(resolve => {
-                execFile('yt-dlp', [
-                    '--no-warnings', '-f', 'bestvideo[height<=360]+bestaudio/best[height<=360]/best',
-                    '--merge-output-format', 'mp4',
-                    '-o', tmpFile, '--no-part',
-                    vidsrcUrl
-                ], { timeout: 180000 }, (err, stdout, stderr) => {
-                    resolve({ ok: !err, err: stderr?.trim()?.slice(0, 300) });
-                });
-            });
-            if (!dlResult.ok || !fs.existsSync(tmpFile)) {
-                await sock.sendMessage(jid, { text: `❌ הורדה נכשלה:\n${dlResult.err || 'הקובץ לא נמצא'}` }); return;
-            }
-            const sizeMB = (fs.statSync(tmpFile).size / 1024 / 1024).toFixed(1);
-            await sock.sendMessage(jid, { text: `✅ הורד: ${sizeMB}MB\n📤 מעלה ל-transfer.sh...` });
-
-            // Step 3: upload to transfer.sh
-            const fileStream = fs.createReadStream(tmpFile);
-            const uploadResult = await new Promise(resolve => {
-                const req = https.request({ hostname: 'transfer.sh', path: '/inception.mp4', method: 'PUT', headers: { 'Max-Days': '7' } }, res => {
-                    let body = '';
-                    res.on('data', c => body += c);
-                    res.on('end', () => resolve({ ok: res.statusCode === 200, url: body.trim() }));
-                });
-                req.on('error', e => resolve({ ok: false, err: e.message }));
-                fileStream.pipe(req);
-            });
-            fs.unlink(tmpFile, () => {});
-            if (!uploadResult.ok) {
-                await sock.sendMessage(jid, { text: `❌ העלאה נכשלה: ${uploadResult.err || 'שגיאה'}` }); return;
-            }
-            await sock.sendMessage(jid, { text: `✅ *הצליח!*\n\n📥 קישור הורדה (7 ימים):\n${uploadResult.url}` }); return;
+            await sock.sendMessage(jid, { text: `📊 *תוצאות yt-dlp:*\n\n${lines.join('\n\n')}` }); return;
         }
         if (text.toLowerCase().includes('filemoon')) {
             await sock.sendMessage(jid, { text: '🔍 בודק FileMoon API...' });
