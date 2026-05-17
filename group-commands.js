@@ -181,15 +181,23 @@ function formatDuration(secs) {
     return `${Math.floor(secs / 60)}:${String(Math.floor(secs % 60)).padStart(2, '0')}`;
 }
 
+const SEARCH_OPTS = {
+    noWarnings: true,
+    noCheckCertificates: true,
+    jsRuntimes: `node:${process.execPath}`,
+    dumpSingleJson: true,
+    flatPlaylist: true,
+};
+
 async function searchTracks(query) {
     const cleaned = cleanQuery(query);
+    // SoundCloud search (scsearch3 — proven to work)
     try {
-        const data = await youtubedl(`scsearch10:${cleaned}`, {
-            ...SC_COMMON, flatPlaylist: true,
-        });
+        const data = await youtubedl(`scsearch3:${cleaned}`, SEARCH_OPTS);
         const entries = data?.entries?.length ? data.entries : (data?.id ? [data] : []);
         if (entries.length) {
-            return entries.slice(0, 10).map(e => ({
+            console.log(`✅ SC search: ${entries.length} results`);
+            return entries.map(e => ({
                 title: e.title || 'ללא שם',
                 duration: formatDuration(e.duration),
                 url: e.url || e.webpage_url,
@@ -197,24 +205,24 @@ async function searchTracks(query) {
             }));
         }
     } catch (err) {
-        console.error('SC search error:', err.message?.slice(0, 80));
+        console.error('SC search error:', err.message?.slice(0, 120));
     }
-    // fallback: YouTube
+    // YouTube fallback
     try {
-        const data = await youtubedl(`ytsearch10:${query}`, {
-            noWarnings: true, noCheckCertificates: true,
-            jsRuntimes: `node:${process.execPath}`,
+        const data = await youtubedl(`ytsearch5:${query}`, {
+            ...SEARCH_OPTS,
             extractorArgs: 'youtube:player_client=tv_embedded,android',
-            dumpSingleJson: true, flatPlaylist: true,
         });
-        return (data?.entries || []).filter(e => e.id).slice(0, 10).map(e => ({
+        const entries = (data?.entries || []).filter(e => e.id).slice(0, 5);
+        console.log(`✅ YT search: ${entries.length} results`);
+        return entries.map(e => ({
             title: e.title || e.id,
             duration: formatDuration(e.duration),
             url: `https://www.youtube.com/watch?v=${e.id}`,
             source: 'yt',
         }));
     } catch (err) {
-        console.error('YT search error:', err.message?.slice(0, 80));
+        console.error('YT search error:', err.message?.slice(0, 120));
         return [];
     }
 }
