@@ -134,28 +134,30 @@ async function handlePrivateMessage(sock, msg) {
             await sock.sendMessage(jid, { text: `✅ +${phone} נוסף לרשימה המורשים.\nמצב: רשימה לבנה (${privateWhitelist.size} אנשים)` }); return;
         }
         if (text.toLowerCase().includes('בדיקת הורדה')) {
-            await sock.sendMessage(jid, { text: '🔍 בודק איזה מקור yt-dlp יכול לחלץ ממנו...' });
-            const { execFile } = require('child_process');
+            await sock.sendMessage(jid, { text: '🔍 בודק מקורות עם youtube-dl-exec...' });
+            const youtubedl = require('youtube-dl-exec');
             const sources = [
-                { name: 'vidsrc.to',      url: 'https://vidsrc.to/embed/movie/tt1375666' },
-                { name: 'multiembed',     url: 'https://multiembed.mov/?video_id=tt1375666&tmdb=1' },
-                { name: '2embed',         url: 'https://www.2embed.cc/embed/tt1375666' },
-                { name: 'smashystream',   url: 'https://embed.smashystream.com/playere.php?imdb=tt1375666' },
-                { name: 'archive.org',    url: 'https://archive.org/details/the_general_buster_keaton' },
+                { name: 'vidsrc.to',    url: 'https://vidsrc.to/embed/movie/tt1375666' },
+                { name: 'multiembed',   url: 'https://multiembed.mov/?video_id=tt1375666&tmdb=1' },
+                { name: '2embed',       url: 'https://www.2embed.cc/embed/tt1375666' },
+                { name: 'smashystream', url: 'https://embed.smashystream.com/playere.php?imdb=tt1375666' },
+                { name: 'archive.org',  url: 'https://archive.org/details/the_general_buster_keaton' },
             ];
-            const tryGetUrl = (url) => new Promise(resolve => {
-                execFile('yt-dlp', ['--get-url', '--no-warnings', '--no-playlist', '-f', 'best[height<=480]/best', url],
-                    { timeout: 20000 }, (err, stdout, stderr) => {
-                        const out = stdout?.trim();
-                        resolve({ ok: !!out && out.startsWith('http'), url: out?.slice(0, 150), err: stderr?.trim()?.slice(0, 100) });
-                    });
-            });
+            const tryGetUrl = async (url) => {
+                try {
+                    const out = await youtubedl(url, { getUrl: true, noWarnings: true, noPlaylist: true, format: 'best[height<=480]/best' });
+                    const line = (out || '').trim().split('\n')[0];
+                    return { ok: line.startsWith('http'), url: line.slice(0, 150) };
+                } catch (e) {
+                    return { ok: false, err: e.message?.slice(0, 100) };
+                }
+            };
             const lines = [];
             for (const s of sources) {
                 const r = await tryGetUrl(s.url);
                 lines.push(`${r.ok ? '✅' : '❌'} *${s.name}*${r.ok ? `\n${r.url}` : `\n${r.err || 'אין פלט'}`}`);
             }
-            await sock.sendMessage(jid, { text: `📊 *תוצאות yt-dlp:*\n\n${lines.join('\n\n')}` }); return;
+            await sock.sendMessage(jid, { text: `📊 *תוצאות:*\n\n${lines.join('\n\n')}` }); return;
         }
         if (text.toLowerCase().includes('filemoon')) {
             await sock.sendMessage(jid, { text: '🔍 בודק FileMoon API...' });
