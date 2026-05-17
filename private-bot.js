@@ -133,7 +133,7 @@ async function handlePrivateMessage(sock, msg) {
             saveSettings();
             await sock.sendMessage(jid, { text: `✅ +${phone} נוסף לרשימה המורשים.\nמצב: רשימה לבנה (${privateWhitelist.size} אנשים)` }); return;
         }
-        if (text === 'בדיקת filemoon') {
+        if (text.toLowerCase().includes('filemoon')) {
             await sock.sendMessage(jid, { text: '🔍 בודק FileMoon API...' });
             const https = require('https');
             function fetchUrl(url, timeoutMs = 10000) {
