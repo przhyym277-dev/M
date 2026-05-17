@@ -259,21 +259,33 @@ async function downloadAsMp4(url, title) {
     // SoundCloud has no video — search YouTube by title
     if (url.includes('soundcloud.com')) {
         console.log(`🎬 SC→YT MP4 search: "${cleanQuery(title)}"`);
-        const search = await youtubedl(`ytsearch1:${cleanQuery(title)}`, {
-            noWarnings: true, noCheckCertificates: true,
-            jsRuntimes: `node:${process.execPath}`,
-            extractorArgs: 'youtube:player_client=tv_embedded,android',
-            dumpSingleJson: true, flatPlaylist: true,
-        });
+        let search;
+        try {
+            search = await youtubedl(`ytsearch1:${cleanQuery(title)}`, {
+                noWarnings: true, noCheckCertificates: true,
+                jsRuntimes: `node:${process.execPath}`,
+                extractorArgs: 'youtube:player_client=tv_embedded,android',
+                dumpSingleJson: true, flatPlaylist: true,
+            });
+        } catch (e) {
+            console.error('YT search err:', e.message || '', e.stderr?.slice(0, 150) || '');
+            throw new Error('חיפוש YouTube נכשל');
+        }
         const entry = search?.entries?.[0];
         if (!entry?.id) throw new Error('לא נמצא סרטון ב-YouTube');
         url = `https://www.youtube.com/watch?v=${entry.id}`;
         console.log(`✅ YT found: "${entry.title}"`);
     }
-    const info = await youtubedl(url, {
-        ...YTDL_COMMON, dumpSingleJson: true,
-        format: 'best[ext=mp4][height<=480]/best[ext=mp4]/best', noPlaylist: true,
-    });
+    let info;
+    try {
+        info = await youtubedl(url, {
+            ...YTDL_COMMON, dumpSingleJson: true,
+            format: 'best[ext=mp4][height<=480]/best[ext=mp4]/best', noPlaylist: true,
+        });
+    } catch (e) {
+        console.error('YT download err:', e.message || '', e.stderr?.slice(0, 150) || '');
+        throw new Error('הורדת YouTube נכשלה');
+    }
     if (!info?.url) throw new Error('לא ניתן להוריד');
     if ((info.duration || 0) > 600) throw new Error('הוידאו ארוך מדי (מקסימום 10 דקות)');
     const buffer = await downloadBuffer(info.url, 90000);
