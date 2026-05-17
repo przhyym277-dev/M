@@ -289,32 +289,44 @@ async function downloadAsMp4(url, title) {
 }
 
 async function getTorrentLinks(imdbId) {
-    try {
-        const res = await downloadBuffer(`https://torrentio.strem.fun/stream/movie/${imdbId}.json`, 15000);
-        const data = JSON.parse(res.toString());
-        const streams = (data.streams || []).filter(s => s.url?.startsWith('magnet:') || s.infoHash);
-        const parsed = streams.map(s => {
-            const lines = (s.title || '').split('\n');
-            const titleLine = lines[0] || '';
-            const infoLine = lines[1] || '';
-            const sizeMatch = infoLine.match(/💾\s*([\d.]+\s*G?B)/i);
-            const size = sizeMatch ? sizeMatch[1].trim() : '';
-            let quality = 'HD';
-            if (/2160p|4k/i.test(titleLine)) quality = '4K';
-            else if (/1080p/i.test(titleLine)) quality = '1080p';
-            else if (/720p/i.test(titleLine)) quality = '720p';
-            else if (/480p/i.test(titleLine)) quality = '480p';
-            const magnet = s.infoHash
-                ? `magnet:?xt=urn:btih:${s.infoHash}&dn=${encodeURIComponent(titleLine.slice(0,60))}`
-                : s.url;
-            return { quality, size, magnet };
-        });
-        const seen = new Set();
-        return parsed.filter(s => { if (seen.has(s.quality)) return false; seen.add(s.quality); return true; }).slice(0, 4);
-    } catch (e) {
-        console.error('Torrentio error:', e.message);
-        return [];
+    const endpoints = [
+        `https://torrentio.strem.fun/providers=yts,eztv,rarbg,1337x/stream/movie/${imdbId}.json`,
+        `https://torrentio.strem.fun/stream/movie/${imdbId}.json`,
+        `https://knightcrawler.elfhosted.com/stream/movie/${imdbId}.json`,
+    ];
+    for (const url of endpoints) {
+        try {
+            console.log(`🎬 torrent fetch: ${url}`);
+            const res = await downloadBuffer(url, 20000);
+            const text = res.toString();
+            const data = JSON.parse(text);
+            console.log(`🎬 torrent response: ${(data.streams||[]).length} streams`);
+            const streams = (data.streams || []).filter(s => s.url?.startsWith('magnet:') || s.infoHash);
+            if (!streams.length) continue;
+            const parsed = streams.map(s => {
+                const lines = (s.title || s.name || '').split('\n');
+                const titleLine = lines[0] || '';
+                const infoLine = lines[1] || '';
+                const sizeMatch = infoLine.match(/💾\s*([\d.]+\s*G?B)/i);
+                const size = sizeMatch ? sizeMatch[1].trim() : '';
+                let quality = 'HD';
+                if (/2160p|4k/i.test(titleLine)) quality = '4K';
+                else if (/1080p/i.test(titleLine)) quality = '1080p';
+                else if (/720p/i.test(titleLine)) quality = '720p';
+                else if (/480p/i.test(titleLine)) quality = '480p';
+                const magnet = s.infoHash
+                    ? `magnet:?xt=urn:btih:${s.infoHash}&dn=${encodeURIComponent(titleLine.slice(0,60))}`
+                    : s.url;
+                return { quality, size, magnet };
+            });
+            const seen = new Set();
+            const result = parsed.filter(s => { if (seen.has(s.quality)) return false; seen.add(s.quality); return true; }).slice(0, 4);
+            if (result.length) return result;
+        } catch (e) {
+            console.error(`Torrentio error (${url.slice(0,50)}):`, e.message);
+        }
     }
+    return [];
 }
 
 async function generateImage(prompt) {
