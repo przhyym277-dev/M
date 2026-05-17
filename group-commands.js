@@ -425,10 +425,11 @@ async function handleFunCommand(sock, msg, jid, text, pushName, groupParticipant
                         if (m.overview) replyText += `\n\n📖 ${m.overview.slice(0, 200)}`;
                         await sock.sendMessage(jid, { text: replyText }, { quoted: msg });
                         if (imdbId) {
-                            const searchLinks = getTorrentSearchLinks(m.title, year);
-                            await sock.sendMessage(jid, { text: `🔗 *הורדה - ${m.title}:*\n📲 לחץ → בחר טורנט → פתח עם uTorrent/Stremio\n\n${searchLinks}` });
+                            const watchLink = getWatchLink(imdbId, m.title);
+                            await sock.sendMessage(jid, { text: `▶️ *לצפייה ב${m.title}:*\n📲 פתח בדפדפן — עובד בלי הורדה ובלי חשבון\n\n${watchLink}` });
                         }
                     } catch (e) {
+                        console.error('movie pick error:', e.message);
                         await sock.sendMessage(jid, { text: `❌ שגיאה: ${e.message?.slice(0, 60)}` });
                     }
                     return true;
