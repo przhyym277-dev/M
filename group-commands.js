@@ -195,7 +195,10 @@ async function searchYouTube10(query) {
             duration: formatDuration(e.duration),
             url: `https://www.youtube.com/watch?v=${e.id}`,
         }));
-    } catch { return []; }
+    } catch (err) {
+        console.error('searchYouTube10 error:', err.message?.slice(0, 120));
+        return [];
+    }
 }
 
 async function downloadAsMp3(ytUrl, title) {
@@ -978,25 +981,7 @@ async function handleFunCommand(sock, msg, jid, text, pushName, groupParticipant
 
         // ── סטיקר ─────────────────────────────────────────────────
         if (text.startsWith('סטיקר ')) {
-            const prompt = text.slice('סטיקר '.length).trim();
-            await sock.sendMessage(jid, { text: `🖼️ יוצר סטיקר: *${prompt}*\n⏳ כ-20 שניות...` }, { quoted: msg });
-            try {
-                const imgBuf = await generateImage(prompt);
-                if (!imgBuf || imgBuf.length < 1000 || imgBuf[0] === 0x3C) throw new Error('שירות התמונות החזיר שגיאה');
-                console.log(`🖼️ sticker: ${imgBuf.length}B sharp=${!!sharp}`);
-                if (sharp) {
-                    const webpBuf = await sharp(imgBuf)
-                        .resize(512, 512, { fit: 'contain', background: { r: 0, g: 0, b: 0, alpha: 0 } })
-                        .webp({ quality: 80 })
-                        .toBuffer();
-                    await sock.sendMessage(jid, { sticker: webpBuf }, { quoted: msg });
-                } else {
-                    await sock.sendMessage(jid, { sticker: imgBuf }, { quoted: msg });
-                }
-            } catch (e) {
-                console.error('sticker error:', e.message);
-                try { await sock.sendMessage(jid, { text: `❌ שגיאה ביצירת סטיקר: ${e.message.slice(0, 80)}` }); } catch {}
-            }
+            await sock.sendMessage(jid, { text: '🖼️ פקודת הסטיקרים בתחזוקה כרגע, נחזור בקרוב! 🔧' });
             return true;
         }
 

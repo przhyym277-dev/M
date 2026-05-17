@@ -15,7 +15,7 @@ async function askGroqReply(question) {
             const r = await client.chat.completions.create({
                 model: 'llama-3.3-70b-versatile',
                 messages: [
-                    { role: 'system', content: 'אתה בוט ווטסאפ חכם ומצחיק. ענה בעברית, קצר, עם אמוג\'י. הבעלים שלך הם יאיר פרץ ויאיר פריש.' },
+                    { role: 'system', content: 'אתה בוט ווטסאפ חכם ומצחיק. ענה בעברית, קצר, עם אמוג\'י. אל תזכיר מי הבעלים שלך אלא אם שאלו אותך ישירות.' },
                     { role: 'user', content: question },
                 ],
                 max_tokens: 300, temperature: 0.8,
