@@ -384,19 +384,35 @@ async function handleFunCommand(sock, msg, jid, text, pushName, groupParticipant
                 const n = parseInt(text.trim(), 10);
                 if (!isNaN(n) && n >= 1 && n <= pending.results.length) {
                     const chosen = pending.results[n - 1];
+                    pendingUserActions.set(pendingKey, { type: 'song_format', result: chosen, expiresAt: Date.now() + 3 * 60 * 1000 });
+                    await sock.sendMessage(jid, {
+                        text: `🎵 *${chosen.title}*${chosen.duration ? ` (${chosen.duration})` : ''}\n\nבאיזה פורמט?\n1️⃣ MP3 — שמע\n2️⃣ MP4 — וידאו`,
+                    }, { quoted: msg });
+                    return true;
+                }
+            } else if (pending.type === 'song_format') {
+                const choice = text.trim().toLowerCase();
+                if (['1','mp3','1️⃣','2','mp4','2️⃣'].includes(choice)) {
+                    const wantMp4 = ['2','mp4','2️⃣'].includes(choice);
                     pendingUserActions.delete(pendingKey);
-                    await sock.sendMessage(jid, { text: `⬇️ מוריד *${chosen.title}*...` }, { quoted: msg });
+                    const { result } = pending;
+                    await sock.sendMessage(jid, { text: `⬇️ מוריד *${result.title}*...` }, { quoted: msg });
                     try {
-                        const { buffer, title, mimetype } = await downloadAsMp3(chosen.url, chosen.title);
-                        if (buffer.length > 20 * 1024 * 1024) { await sock.sendMessage(jid, { text: '❌ הקובץ גדול מדי' }); return true; }
-                        await sock.sendMessage(jid, { audio: buffer, mimetype, ptt: false }, { quoted: msg });
-                        await sock.sendMessage(jid, { text: `🎵 *${title}*` });
+                        if (wantMp4) {
+                            const { buffer, title } = await downloadAsMp4(result.url, result.title);
+                            if (buffer.length > 50 * 1024 * 1024) { await sock.sendMessage(jid, { text: '❌ הקובץ גדול מדי' }); return true; }
+                            await sock.sendMessage(jid, { video: buffer, mimetype: 'video/mp4', fileName: `${title}.mp4` }, { quoted: msg });
+                        } else {
+                            const { buffer, title, mimetype } = await downloadAsMp3(result.url, result.title);
+                            if (buffer.length > 20 * 1024 * 1024) { await sock.sendMessage(jid, { text: '❌ הקובץ גדול מדי' }); return true; }
+                            await sock.sendMessage(jid, { audio: buffer, mimetype, ptt: false }, { quoted: msg });
+                            await sock.sendMessage(jid, { text: `🎵 *${title}*` });
+                        }
                     } catch (e) {
                         await sock.sendMessage(jid, { text: `❌ שגיאה בהורדה: ${e.message.slice(0, 80)}` });
                     }
                     return true;
                 }
-                // not a valid number — let other commands run, keep pending
             }
         }
 

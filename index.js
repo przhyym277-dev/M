@@ -1560,5 +1560,23 @@ ${existingKnowledge}
 }
 
 process.on('unhandledRejection', (err) => console.error('שגיאה:', err.message));
+
+// ── הבטח שyt-dlp קיים על הדיסק הקבוע ─────────────────────────
+const { execSync } = require('child_process');
+const _fs = require('fs');
+const YTDLP_PATH = _fs.existsSync('/data') ? '/data/yt-dlp' : require('path').join(__dirname, 'yt-dlp');
+process.env.YOUTUBE_DL_PATH = YTDLP_PATH;
+if (!_fs.existsSync(YTDLP_PATH) || _fs.statSync(YTDLP_PATH).size < 10000) {
+    console.log('⬇️ מוריד yt-dlp...');
+    try {
+        execSync(`curl -fsSL "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp" -o "${YTDLP_PATH}" && chmod +x "${YTDLP_PATH}"`, { timeout: 60000 });
+        console.log('✅ yt-dlp הותקן ב-' + YTDLP_PATH);
+    } catch (e) {
+        console.error('❌ הורדת yt-dlp נכשלה:', e.message?.slice(0, 80));
+    }
+} else {
+    console.log('✅ yt-dlp קיים:', YTDLP_PATH);
+}
+
 startBot();
 
