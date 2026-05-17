@@ -385,7 +385,6 @@ const LOCKABLE_PREFIXES = [
     ['ראפ ','ראפ'],['תרגם ','תרגם'],['מחמאה ','מחמאה'],['עלבון ','עלבון'],
     ['מתכון ','מתכון'],['תרגיל ','תרגיל'],['מילה ','מילה'],['שיר ','שיר'],
     ['סרט ','סרט'],
-    ['סדרה ','סדרה'],
     ['סקר ','סקר'],['הצבעה ','הצבעה'],['אנונימי ','אנונימי'],['תזכורת ','תזכורת'],
     ['ספירה ','ספירה'],['מי אמר ','מי אמר'],['גימטריה ','גימטריה'],
     ['הגרלה ','הגרלה'],['חשב ','חשב'],['חזור ','חזור'],['מזל ','מזל'],
@@ -435,32 +434,6 @@ async function handleFunCommand(sock, msg, jid, text, pushName, groupParticipant
                         }
                     } catch (e) {
                         console.error('movie pick error:', e.message);
-                        await sock.sendMessage(jid, { text: `❌ שגיאה: ${e.message?.slice(0, 60)}` });
-                    }
-                    return true;
-                }
-            }
-            else if (pending.type === 'tv_results') {
-                const n = parseInt(text.trim(), 10);
-                if (!isNaN(n) && n >= 1 && n <= pending.shows.length) {
-                    const s = pending.shows[n - 1];
-                    pendingUserActions.delete(pendingKey);
-                    try {
-                        const TMDB_KEY = process.env.TMDB_API_KEY || 'e7eac9b0420be7d93d03abfd76f5eac0';
-                        const imdbRes = await downloadBuffer(`https://api.themoviedb.org/3/tv/${s.id}/external_ids?api_key=${TMDB_KEY}`, 8000);
-                        const imdbData = JSON.parse(imdbRes.toString());
-                        const imdbId = imdbData.imdb_id;
-                        const year = s.first_air_date ? s.first_air_date.slice(0, 4) : '';
-                        const rating = s.vote_average ? `⭐ ${s.vote_average.toFixed(1)}/10` : '';
-                        let replyText = `📺 *${s.name}*${year ? ` (${year})` : ''}\n${rating}`;
-                        if (s.overview) replyText += `\n\n📖 ${s.overview.slice(0, 200)}`;
-                        await sock.sendMessage(jid, { text: replyText }, { quoted: msg });
-                        if (imdbId) {
-                            const watchLink = getTvWatchLink(imdbId);
-                            await sock.sendMessage(jid, { text: `▶️ *לצפייה ב${s.name}:*\n📲 פתח בדפדפן — בחר עונה ופרק\n\n${watchLink}` });
-                        }
-                    } catch (e) {
-                        console.error('tv pick error:', e.message);
                         await sock.sendMessage(jid, { text: `❌ שגיאה: ${e.message?.slice(0, 60)}` });
                     }
                     return true;
@@ -1115,46 +1088,6 @@ async function handleFunCommand(sock, msg, jid, text, pushName, groupParticipant
             } catch (e) {
                 console.error('movie search error:', e.message);
                 await sock.sendMessage(jid, { text: `❌ שגיאה בחיפוש סרט: ${e.message?.slice(0, 60)}` });
-            }
-            return true;
-        }
-
-        // ── סדרה ───────────────────────────────────────────────────
-        if (text.startsWith('סדרה ')) {
-            if (!isPrivate && !isPremiumEnabled(jid, 'סדרה')) { await sock.sendMessage(jid, { text: '🔒 פקודת *סדרה* אינה זמינה בקבוצה זו.' }); return true; }
-            const tvQuery = text.slice('סדרה '.length).trim();
-            await sock.sendMessage(jid, { text: `📺 מחפש סדרה: *${tvQuery}*...` }, { quoted: msg });
-            try {
-                const TMDB_KEY = process.env.TMDB_API_KEY || 'e7eac9b0420be7d93d03abfd76f5eac0';
-                const searchUrl = `https://api.themoviedb.org/3/search/tv?api_key=${TMDB_KEY}&query=${encodeURIComponent(tvQuery)}&language=he-IL`;
-                const searchRes = await downloadBuffer(searchUrl, 10000);
-                const searchData = JSON.parse(searchRes.toString());
-                const shows = (searchData.results || []).slice(0, 5);
-                if (!shows.length) {
-                    await sock.sendMessage(jid, { text: '❌ לא נמצאה סדרה כזו' }); return true;
-                }
-                if (shows.length === 1 || shows[0].name?.toLowerCase() === tvQuery.toLowerCase()) {
-                    const s = shows[0];
-                    const imdbRes = await downloadBuffer(`https://api.themoviedb.org/3/tv/${s.id}/external_ids?api_key=${TMDB_KEY}`, 8000);
-                    const imdbData = JSON.parse(imdbRes.toString());
-                    const imdbId = imdbData.imdb_id;
-                    const year = s.first_air_date ? s.first_air_date.slice(0, 4) : '';
-                    const rating = s.vote_average ? `⭐ ${s.vote_average.toFixed(1)}/10` : '';
-                    let replyText = `📺 *${s.name}*${year ? ` (${year})` : ''}\n${rating}`;
-                    if (s.overview) replyText += `\n\n📖 ${s.overview.slice(0, 200)}`;
-                    await sock.sendMessage(jid, { text: replyText }, { quoted: msg });
-                    if (imdbId) {
-                        const watchLink = getTvWatchLink(imdbId);
-                        await sock.sendMessage(jid, { text: `▶️ *לצפייה ב${s.name}:*\n📲 פתח בדפדפן — בחר עונה ופרק\n\n${watchLink}` });
-                    }
-                } else {
-                    const showsList = shows.map((s, i) => `${i + 1}. *${s.name}* ${s.first_air_date ? `(${s.first_air_date.slice(0,4)})` : ''}`).join('\n');
-                    await sock.sendMessage(jid, { text: `📺 *נמצאו כמה סדרות:*\n\n${showsList}\n\nשלח מספר 1-${shows.length} לבחירה` }, { quoted: msg });
-                    pendingUserActions.set(pendingKey, { type: 'tv_results', shows, expiresAt: Date.now() + 5 * 60 * 1000 });
-                }
-            } catch (e) {
-                console.error('tv search error:', e.message);
-                await sock.sendMessage(jid, { text: `❌ שגיאה בחיפוש סדרה: ${e.message?.slice(0, 60)}` });
             }
             return true;
         }
