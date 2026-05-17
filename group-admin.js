@@ -11,6 +11,9 @@ const groupSettings = new Map();
 const warnings = new Map();
 const lockedCommands = new Map();
 const groupWelcomeTemplates = new Map();
+const premiumSettings = new Map(); // gid → { שיר: bool, סרט: bool, תמונה: bool }
+
+const PREMIUM_COMMANDS = ['שיר', 'סרט', 'תמונה'];
 
 function loadSettings() {
     try {
@@ -35,6 +38,10 @@ function loadSettings() {
             for (const [gid, t] of Object.entries(raw.welcomeTemplates))
                 groupWelcomeTemplates.set(gid, t);
         }
+        if (raw.premiumSettings) {
+            for (const [gid, p] of Object.entries(raw.premiumSettings))
+                premiumSettings.set(gid, p);
+        }
         console.log(`✅ Group settings loaded (${groupSettings.size} groups)`);
     } catch (e) {
         console.error('Failed to load group settings:', e.message);
@@ -52,6 +59,7 @@ function saveSettings() {
                 lockedCommands: Object.fromEntries([...lockedCommands].map(([k, v]) => [k, [...v]])),
                 warnings: Object.fromEntries([...warnings].map(([gid, m]) => [gid, Object.fromEntries(m)])),
                 welcomeTemplates: Object.fromEntries(groupWelcomeTemplates),
+                premiumSettings: Object.fromEntries(premiumSettings),
             };
             fs.writeFileSync(SETTINGS_FILE, JSON.stringify(data, null, 2), 'utf8');
         } catch (e) {
@@ -90,11 +98,45 @@ function getLockedSet(gid) {
     return lockedCommands.get(gid);
 }
 
+function getPremium(gid) {
+    if (!premiumSettings.has(gid)) premiumSettings.set(gid, { שיר: true, סרט: true, תמונה: true });
+    return premiumSettings.get(gid);
+}
+
+function isPremiumEnabled(gid, cmd) {
+    return getPremium(gid)[cmd] !== false;
+}
+
 async function handleAdminCommand(sock, msg, jid, text, senderJid, isSenderAdmin, isBotAdmin) {
     const settings = getSettings(jid);
     const trimmed = text.trim();
     const cmd = trimmed.split(' ')[0];
     const isAdmin = isSenderAdmin || isGlobalAdmin(senderJid);
+
+    // ── הרשאות פרימיום (בעלים בלבד) ──────────────────────────────
+    if (trimmed === 'הרשאות פרימיום') {
+        if (!isGlobalAdmin(senderJid)) { await sock.sendMessage(jid, { text: '🚫 פקודה זו זמינה לבעלי הבוט בלבד.' }); return true; }
+        const p = getPremium(jid);
+        const lines = PREMIUM_COMMANDS.map(c => `${p[c] !== false ? '✅' : '❌'} *${c}* — ${p[c] !== false ? 'פעיל' : 'כבוי'}`).join('\n');
+        await sock.sendMessage(jid, { text: `👑 *הרשאות פרימיום לקבוצה זו:*\n\n${lines}\n\nשינוי: *פרימיום [פקודה] [פעיל/כבוי]*\nדוגמה: פרימיום שיר כבוי` });
+        return true;
+    }
+
+    if (trimmed.startsWith('פרימיום ')) {
+        if (!isGlobalAdmin(senderJid)) { await sock.sendMessage(jid, { text: '🚫 פקודה זו זמינה לבעלי הבוט בלבד.' }); return true; }
+        const parts = trimmed.slice('פרימיום '.length).trim().split(' ');
+        const cmdName = parts[0];
+        const state = parts[1];
+        if (!PREMIUM_COMMANDS.includes(cmdName) || !['פעיל','כבוי'].includes(state)) {
+            await sock.sendMessage(jid, { text: `⚠️ כתוב: פרימיום [${PREMIUM_COMMANDS.join('/')}] [פעיל/כבוי]` });
+            return true;
+        }
+        const p = getPremium(jid);
+        p[cmdName] = state === 'פעיל';
+        saveSettings();
+        await sock.sendMessage(jid, { text: `👑 פקודת *${cmdName}* ${state === 'פעיל' ? '✅ הופעלה' : '❌ כובתה'} בקבוצה זו.` });
+        return true;
+    }
 
     if (cmd === 'הסרתקישורים') {
         if (!isAdmin) { await sock.sendMessage(jid, { text: `🚫 רק מנהלים יכולים להשתמש בפקודה זו.` }); return true; }
@@ -456,4 +498,4 @@ async function handleWelcome(sock, jid, participants) {
     }
 }
 
-module.exports = { handleAdminCommand, handleAutoModeration, handleWelcome, isCommandLocked };
+module.exports = { handleAdminCommand, handleAutoModeration, handleWelcome, isCommandLocked, isPremiumEnabled };
