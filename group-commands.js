@@ -290,11 +290,10 @@ async function downloadAsMp4(url, title) {
 
 function getTorrentSearchLinks(movieTitle, year) {
     const q = encodeURIComponent(`${movieTitle} ${year || ''}`.trim());
-    const qPlain = encodeURIComponent(movieTitle);
     return [
-        `🔹 *YTS:* https://yts.mx/movies/${encodeURIComponent(movieTitle.toLowerCase().replace(/\s+/g, '-'))}-${year || ''}`,
         `🔹 *1337x:* https://www.1337x.to/search/${q}/1/`,
-        `🔹 *TPB:* https://thepiratebay.org/search.php?q=${qPlain}&cat=207`,
+        `🔹 *YTS:* https://yts.mx/browse-movies/${q}/all/all/0/latest/0/all`,
+        `🔹 *Google:* https://www.google.com/search?q=${encodeURIComponent(`"${movieTitle}" ${year || ''} 1080p torrent download`)}`,
     ].join('\n');
 }
 
@@ -386,6 +385,7 @@ function getCountryInfo(phone) {
 const LOCKABLE_PREFIXES = [
     ['ראפ ','ראפ'],['תרגם ','תרגם'],['מחמאה ','מחמאה'],['עלבון ','עלבון'],
     ['מתכון ','מתכון'],['תרגיל ','תרגיל'],['מילה ','מילה'],['שיר ','שיר'],
+    ['סרט ','סרט'],
     ['סקר ','סקר'],['הצבעה ','הצבעה'],['אנונימי ','אנונימי'],['תזכורת ','תזכורת'],
     ['ספירה ','ספירה'],['מי אמר ','מי אמר'],['גימטריה ','גימטריה'],
     ['הגרלה ','הגרלה'],['חשב ','חשב'],['חזור ','חזור'],['מזל ','מזל'],
