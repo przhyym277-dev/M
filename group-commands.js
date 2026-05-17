@@ -288,13 +288,8 @@ async function downloadAsMp4(url, title) {
     return { buffer, title: info.videoDetails.title || title };
 }
 
-function getTorrentSearchLinks(movieTitle, year) {
-    const q = encodeURIComponent(`${movieTitle} ${year || ''}`.trim());
-    return [
-        `🔹 *1337x:* https://www.1337x.to/search/${q}/1/`,
-        `🔹 *YTS:* https://yts.mx/browse-movies/${q}/all/all/0/latest/0/all`,
-        `🔹 *Google:* https://www.google.com/search?q=${encodeURIComponent(`"${movieTitle}" ${year || ''} 1080p torrent download`)}`,
-    ].join('\n');
+function getWatchLink(imdbId, movieTitle) {
+    return `https://www.2embed.cc/embed/${imdbId}`;
 }
 
 async function generateImage(prompt) {
@@ -1075,8 +1070,8 @@ async function handleFunCommand(sock, msg, jid, text, pushName, groupParticipant
                     if (m.overview) replyText += `\n\n📖 ${m.overview.slice(0, 200)}`;
                     await sock.sendMessage(jid, { text: replyText }, { quoted: msg });
                     if (imdbId) {
-                        const searchLinks = getTorrentSearchLinks(m.title, year);
-                        await sock.sendMessage(jid, { text: `🔗 *הורדה - ${m.title}:*\n📲 לחץ → בחר טורנט → פתח עם uTorrent/Stremio\n\n${searchLinks}` });
+                        const watchLink = getWatchLink(imdbId, m.title);
+                        await sock.sendMessage(jid, { text: `▶️ *לצפייה ב${m.title}:*\n📲 פתח בדפדפן — עובד בלי הורדה ובלי חשבון\n\n${watchLink}` });
                     }
                 } else {
                     const moviesList = movies.map((m, i) => `${i + 1}. *${m.title}* ${m.release_date ? `(${m.release_date.slice(0,4)})` : ''}`).join('\n');
