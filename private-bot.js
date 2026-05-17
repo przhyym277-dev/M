@@ -133,6 +133,47 @@ async function handlePrivateMessage(sock, msg) {
             saveSettings();
             await sock.sendMessage(jid, { text: `✅ +${phone} נוסף לרשימה המורשים.\nמצב: רשימה לבנה (${privateWhitelist.size} אנשים)` }); return;
         }
+        if (text === 'בדיקת מקורות') {
+            await sock.sendMessage(jid, { text: '🔍 בודק מקורות הורדה מ-Render... (30 שניות)' });
+            const https = require('https');
+            const http = require('http');
+            function testUrl(url, timeoutMs = 8000) {
+                return new Promise(resolve => {
+                    const mod = url.startsWith('https') ? https : http;
+                    const start = Date.now();
+                    const req = mod.get(url, { headers: { 'User-Agent': 'Mozilla/5.0' }, timeout: timeoutMs }, res => {
+                        const ms = Date.now() - start;
+                        let body = '';
+                        res.on('data', c => { if (body.length < 500) body += c.toString(); });
+                        res.on('end', () => resolve({ status: res.statusCode, ms, body: body.slice(0, 200) }));
+                    });
+                    req.on('error', e => resolve({ status: 0, ms: Date.now() - start, error: e.message.slice(0, 60) }));
+                    req.on('timeout', () => { req.destroy(); resolve({ status: 0, ms: timeoutMs, error: 'timeout' }); });
+                });
+            }
+            const sources = [
+                { name: 'YTS API',         url: 'https://yts.mx/api/v2/list_movies.json?query_term=inception&limit=1' },
+                { name: 'Torrentio',       url: 'https://torrentio.strem.fun/stream/movie/tt1375666.json' },
+                { name: '1337x',           url: 'https://www.1337x.to/search/inception/1/' },
+                { name: 'RARBG mirror',    url: 'https://rargb.to/search/?search=inception' },
+                { name: 'Nyaa',            url: 'https://nyaa.si/?q=inception&c=0_0&f=0' },
+                { name: 'Archive.org',     url: 'https://archive.org/advancedsearch.php?q=inception&output=json&rows=1' },
+                { name: 'Pixeldrain',      url: 'https://pixeldrain.com/api/misc/top_list' },
+                { name: 'Gofile',          url: 'https://api.gofile.io/getServer' },
+                { name: 'FileMoon API',    url: 'https://filemoon.sx/api' },
+                { name: 'Vidsrc.me',       url: 'https://vidsrc.me/embed/movie/tt1375666' },
+                { name: 'MoviesAPI.club',  url: 'https://moviesapi.club/movie/tt1375666' },
+                { name: 'Multiembed',      url: 'https://multiembed.mov/?video_id=tt1375666&tmdb=1' },
+            ];
+            const results = await Promise.all(sources.map(async s => {
+                const r = await testUrl(s.url);
+                const ok = r.status >= 200 && r.status < 400;
+                const hasJson = r.body?.startsWith('{') || r.body?.startsWith('[');
+                const blocked = r.body?.toLowerCase().includes('blocked') || r.body?.toLowerCase().includes('cloudflare') || r.body?.toLowerCase().includes('403');
+                return `${ok && !blocked ? '✅' : '❌'} *${s.name}* — ${r.error || `${r.status} (${r.ms}ms)${hasJson ? ' JSON✓' : ''}`}`;
+            }));
+            await sock.sendMessage(jid, { text: `📊 *תוצאות בדיקת מקורות:*\n\n${results.join('\n')}` }); return;
+        }
         if (text.startsWith('פרטי הסר ')) {
             const phone = normalizePhone(text.slice('פרטי הסר '.length));
             const targetJid = `${phone}@s.whatsapp.net`;
