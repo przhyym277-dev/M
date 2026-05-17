@@ -288,44 +288,50 @@ async function downloadAsMp4(url, title) {
     return { buffer, title: info.videoDetails.title || title };
 }
 
-async function getTorrentLinks(imdbId) {
-    const endpoints = [
-        `https://torrentio.strem.fun/providers=yts,eztv,rarbg,1337x/stream/movie/${imdbId}.json`,
-        `https://torrentio.strem.fun/stream/movie/${imdbId}.json`,
-        `https://knightcrawler.elfhosted.com/stream/movie/${imdbId}.json`,
-    ];
-    for (const url of endpoints) {
-        try {
-            console.log(`🎬 torrent fetch: ${url}`);
-            const res = await downloadBuffer(url, 20000);
-            const text = res.toString();
-            const data = JSON.parse(text);
-            console.log(`🎬 torrent response: ${(data.streams||[]).length} streams`);
-            const streams = (data.streams || []).filter(s => s.url?.startsWith('magnet:') || s.infoHash);
-            if (!streams.length) continue;
-            const parsed = streams.map(s => {
-                const lines = (s.title || s.name || '').split('\n');
-                const titleLine = lines[0] || '';
-                const infoLine = lines[1] || '';
-                const sizeMatch = infoLine.match(/💾\s*([\d.]+\s*G?B)/i);
-                const size = sizeMatch ? sizeMatch[1].trim() : '';
-                let quality = 'HD';
-                if (/2160p|4k/i.test(titleLine)) quality = '4K';
-                else if (/1080p/i.test(titleLine)) quality = '1080p';
-                else if (/720p/i.test(titleLine)) quality = '720p';
-                else if (/480p/i.test(titleLine)) quality = '480p';
-                const magnet = s.infoHash
-                    ? `magnet:?xt=urn:btih:${s.infoHash}&dn=${encodeURIComponent(titleLine.slice(0,60))}`
-                    : s.url;
-                return { quality, size, magnet };
-            });
-            const seen = new Set();
-            const result = parsed.filter(s => { if (seen.has(s.quality)) return false; seen.add(s.quality); return true; }).slice(0, 4);
-            if (result.length) return result;
-        } catch (e) {
-            console.error(`Torrentio error (${url.slice(0,50)}):`, e.message);
+const TRACKERS = [
+    'udp://open.demonii.com:1337/announce',
+    'udp://tracker.openbittorrent.com:80',
+    'udp://tracker.opentrackr.org:1337/announce',
+].map(t => `&tr=${encodeURIComponent(t)}`).join('');
+
+async function getTorrentLinks(imdbId, movieTitle) {
+    // YTS API — high quality, clean JSON, public
+    try {
+        console.log(`🎬 YTS search: ${imdbId}`);
+        const res = await downloadBuffer(`https://yts.mx/api/v2/list_movies.json?query_term=${imdbId}&limit=1`, 10000);
+        const data = JSON.parse(res.toString());
+        const movie = data?.data?.movies?.[0];
+        if (movie?.torrents?.length) {
+            console.log(`✅ YTS: ${movie.torrents.length} torrents`);
+            return movie.torrents.slice(0, 4).map(t => ({
+                quality: t.quality,
+                size: t.size,
+                magnet: `magnet:?xt=urn:btih:${t.hash}&dn=${encodeURIComponent(movie.title_english || movie.title)}${TRACKERS}`,
+            }));
         }
-    }
+    } catch (e) { console.error('YTS error:', e.message); }
+
+    // The Pirate Bay API — fallback
+    try {
+        const q = movieTitle ? encodeURIComponent(movieTitle) : imdbId;
+        console.log(`🎬 TPB search: ${q}`);
+        const res = await downloadBuffer(`https://apibay.org/q.php?q=${q}&cat=207`, 10000);
+        const data = JSON.parse(res.toString());
+        if (Array.isArray(data) && data.length && data[0].id !== '0') {
+            console.log(`✅ TPB: ${data.length} results`);
+            const seen = new Set();
+            return data.slice(0, 8).map(t => {
+                let quality = 'HD';
+                if (/2160p|4k/i.test(t.name)) quality = '4K';
+                else if (/1080p/i.test(t.name)) quality = '1080p';
+                else if (/720p/i.test(t.name)) quality = '720p';
+                const bytes = parseInt(t.size);
+                const size = bytes > 1e9 ? `${(bytes/1e9).toFixed(1)}GB` : `${Math.round(bytes/1e6)}MB`;
+                return { quality, size, magnet: `magnet:?xt=urn:btih:${t.info_hash}&dn=${encodeURIComponent(t.name.slice(0,60))}${TRACKERS}` };
+            }).filter(t => { if (seen.has(t.quality)) return false; seen.add(t.quality); return true; }).slice(0, 4);
+        }
+    } catch (e) { console.error('TPB error:', e.message); }
+
     return [];
 }
 
@@ -461,7 +467,7 @@ async function handleFunCommand(sock, msg, jid, text, pushName, groupParticipant
                         if (m.overview) replyText += `\n\n📖 ${m.overview.slice(0, 200)}`;
                         await sock.sendMessage(jid, { text: replyText }, { quoted: msg });
                         if (imdbId) {
-                            const torrents = await getTorrentLinks(imdbId);
+                            const torrents = await getTorrentLinks(imdbId, m.title);
                             if (torrents.length) {
                                 let torrentText = `🔗 *קישורי הורדה - ${m.title}:*\n📲 לחץ → נפתח בתוכנת הטורנטים\n`;
                                 for (const t of torrents) {
