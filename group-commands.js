@@ -181,7 +181,25 @@ function formatDuration(secs) {
     return `${Math.floor(secs / 60)}:${String(Math.floor(secs % 60)).padStart(2, '0')}`;
 }
 
-async function searchYouTube10(query) {
+async function searchTracks(query) {
+    const cleaned = cleanQuery(query);
+    try {
+        const data = await youtubedl(`scsearch10:${cleaned}`, {
+            ...SC_COMMON, flatPlaylist: true,
+        });
+        const entries = data?.entries?.length ? data.entries : (data?.id ? [data] : []);
+        if (entries.length) {
+            return entries.slice(0, 10).map(e => ({
+                title: e.title || 'ללא שם',
+                duration: formatDuration(e.duration),
+                url: e.url || e.webpage_url,
+                source: 'sc',
+            }));
+        }
+    } catch (err) {
+        console.error('SC search error:', err.message?.slice(0, 80));
+    }
+    // fallback: YouTube
     try {
         const data = await youtubedl(`ytsearch10:${query}`, {
             noWarnings: true, noCheckCertificates: true,
@@ -190,13 +208,13 @@ async function searchYouTube10(query) {
             dumpSingleJson: true, flatPlaylist: true,
         });
         return (data?.entries || []).filter(e => e.id).slice(0, 10).map(e => ({
-            id: e.id,
             title: e.title || e.id,
             duration: formatDuration(e.duration),
             url: `https://www.youtube.com/watch?v=${e.id}`,
+            source: 'yt',
         }));
     } catch (err) {
-        console.error('searchYouTube10 error:', err.message?.slice(0, 120));
+        console.error('YT search error:', err.message?.slice(0, 80));
         return [];
     }
 }
@@ -955,7 +973,7 @@ async function handleFunCommand(sock, msg, jid, text, pushName, groupParticipant
             }
             // Search → show 10 results
             await sock.sendMessage(jid, { text: `🔍 מחפש: *${query}*...` }, { quoted: msg });
-            const results = await searchYouTube10(query);
+            const results = await searchTracks(query);
             if (!results.length) { await sock.sendMessage(jid, { text: '❌ לא נמצאו תוצאות' }); return true; }
             const list = results.map((r, i) => `${i + 1}. ${r.title}${r.duration ? ` (${r.duration})` : ''}`).join('\n');
             await sock.sendMessage(jid, { text: `🎵 *תוצאות עבור "${query}":*\n\n${list}\n\nשלח מספר 1-${results.length} לבחירה` }, { quoted: msg });
