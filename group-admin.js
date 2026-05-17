@@ -12,6 +12,7 @@ const warnings = new Map();
 const lockedCommands = new Map();
 const groupWelcomeTemplates = new Map();
 const premiumSettings = new Map(); // gid → { שיר: bool, סרט: bool, תמונה: bool }
+const dailyLimits    = new Map(); // gid → { limit: N, count: N, date: 'YYYY-MM-DD' }
 
 const PREMIUM_COMMANDS = ['שיר', 'סרט', 'תמונה'];
 
@@ -42,6 +43,10 @@ function loadSettings() {
             for (const [gid, p] of Object.entries(raw.premiumSettings))
                 premiumSettings.set(gid, p);
         }
+        if (raw.dailyLimits) {
+            for (const [gid, d] of Object.entries(raw.dailyLimits))
+                dailyLimits.set(gid, d);
+        }
         console.log(`✅ Group settings loaded (${groupSettings.size} groups)`);
     } catch (e) {
         console.error('Failed to load group settings:', e.message);
@@ -60,6 +65,7 @@ function saveSettings() {
                 warnings: Object.fromEntries([...warnings].map(([gid, m]) => [gid, Object.fromEntries(m)])),
                 welcomeTemplates: Object.fromEntries(groupWelcomeTemplates),
                 premiumSettings: Object.fromEntries(premiumSettings),
+                dailyLimits: Object.fromEntries(dailyLimits),
             };
             fs.writeFileSync(SETTINGS_FILE, JSON.stringify(data, null, 2), 'utf8');
         } catch (e) {
@@ -107,6 +113,35 @@ function isPremiumEnabled(gid, cmd) {
     return getPremium(gid)[cmd] !== false;
 }
 
+function todayStr() {
+    return new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Jerusalem' }); // YYYY-MM-DD
+}
+
+function checkDailyLimit(gid) {
+    const entry = dailyLimits.get(gid);
+    if (!entry || !entry.limit) return true; // no limit set
+    const today = todayStr();
+    if (entry.date !== today) { entry.count = 0; entry.date = today; saveSettings(); }
+    return entry.count < entry.limit;
+}
+
+function incrementDailyCount(gid) {
+    const entry = dailyLimits.get(gid);
+    if (!entry || !entry.limit) return;
+    const today = todayStr();
+    if (entry.date !== today) { entry.count = 0; entry.date = today; }
+    entry.count++;
+    saveSettings();
+}
+
+function getDailyStatus(gid) {
+    const entry = dailyLimits.get(gid);
+    if (!entry || !entry.limit) return null;
+    const today = todayStr();
+    const count = (entry.date === today) ? entry.count : 0;
+    return { limit: entry.limit, count };
+}
+
 async function handleAdminCommand(sock, msg, jid, text, senderJid, isSenderAdmin, isBotAdmin) {
     const settings = getSettings(jid);
     const trimmed = text.trim();
@@ -117,8 +152,10 @@ async function handleAdminCommand(sock, msg, jid, text, senderJid, isSenderAdmin
     if (trimmed === 'הרשאות פרימיום') {
         if (!isGlobalAdmin(senderJid)) { await sock.sendMessage(jid, { text: '🚫 פקודה זו זמינה לבעלי הבוט בלבד.' }); return true; }
         const p = getPremium(jid);
-        const lines = PREMIUM_COMMANDS.map(c => `${p[c] !== false ? '✅' : '❌'} *${c}* — ${p[c] !== false ? 'פעיל' : 'כבוי'}`).join('\n');
-        await sock.sendMessage(jid, { text: `👑 *הרשאות פרימיום לקבוצה זו:*\n\n${lines}\n\nשינוי: *פרימיום [פקודה] [פעיל/כבוי]*\nדוגמה: פרימיום שיר כבוי` });
+        const lines = PREMIUM_COMMANDS.map(c => `${p[c] !== false ? '✅' : '❌'} *${c}*`).join('\n');
+        const daily = getDailyStatus(jid);
+        const dailyLine = daily ? `\n📊 *הגבלת הודעות:* ${daily.count}/${daily.limit} היום` : '\n📊 *הגבלת הודעות:* ללא הגבלה';
+        await sock.sendMessage(jid, { text: `👑 *הרשאות פרימיום לקבוצה זו:*\n\n${lines}${dailyLine}\n\nשינוי פקודה: *פרימיום [פקודה] [פעיל/כבוי]*\nהגבלת הודעות: *פרימיום הגבלה [מספר]* / *פרימיום הגבלה כבוי*` });
         return true;
     }
 
@@ -127,8 +164,25 @@ async function handleAdminCommand(sock, msg, jid, text, senderJid, isSenderAdmin
         const parts = trimmed.slice('פרימיום '.length).trim().split(' ');
         const cmdName = parts[0];
         const state = parts[1];
+
+        // הגבלת הודעות יומית
+        if (cmdName === 'הגבלה') {
+            if (state === 'כבוי') {
+                dailyLimits.delete(jid);
+                saveSettings();
+                await sock.sendMessage(jid, { text: '✅ הגבלת ההודעות היומית הוסרה.' });
+            } else {
+                const n = parseInt(state, 10);
+                if (isNaN(n) || n < 1) { await sock.sendMessage(jid, { text: '⚠️ כתוב: פרימיום הגבלה [מספר] / פרימיום הגבלה כבוי' }); return true; }
+                dailyLimits.set(jid, { limit: n, count: 0, date: todayStr() });
+                saveSettings();
+                await sock.sendMessage(jid, { text: `📊 הגבלה נקבעה: עד *${n} הודעות* ביום בקבוצה זו.` });
+            }
+            return true;
+        }
+
         if (!PREMIUM_COMMANDS.includes(cmdName) || !['פעיל','כבוי'].includes(state)) {
-            await sock.sendMessage(jid, { text: `⚠️ כתוב: פרימיום [${PREMIUM_COMMANDS.join('/')}] [פעיל/כבוי]` });
+            await sock.sendMessage(jid, { text: `⚠️ כתוב: פרימיום [${PREMIUM_COMMANDS.join('/')}] [פעיל/כבוי]\nאו: פרימיום הגבלה [מספר/כבוי]` });
             return true;
         }
         const p = getPremium(jid);
@@ -498,4 +552,4 @@ async function handleWelcome(sock, jid, participants) {
     }
 }
 
-module.exports = { handleAdminCommand, handleAutoModeration, handleWelcome, isCommandLocked, isPremiumEnabled };
+module.exports = { handleAdminCommand, handleAutoModeration, handleWelcome, isCommandLocked, isPremiumEnabled, checkDailyLimit, incrementDailyCount };

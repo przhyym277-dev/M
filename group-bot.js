@@ -2,7 +2,7 @@
 
 const Groq = require('groq-sdk');
 const { handleFunCommand, addToHistory } = require('./group-commands');
-const { handleAdminCommand, handleAutoModeration, handleWelcome } = require('./group-admin');
+const { handleAdminCommand, handleAutoModeration, handleWelcome, checkDailyLimit, incrementDailyCount } = require('./group-admin');
 
 const GLOBAL_SUPER_ADMINS = new Set(['972522091733', '972508181322', '98668719951947', '188150102098030']);
 const BOT_OWNERS = { '972522091733': 'יאיר פרץ', '972508181322': 'יאיר פריש' };
@@ -73,6 +73,9 @@ async function handleGroupMessage(sock, msg) {
 
     if (!text) return;
 
+    // ── בדיקת מגבלת הודעות יומית ─────────────────────────────
+    if (!GLOBAL_SUPER_ADMINS.has(senderJid.split('@')[0]) && !checkDailyLimit(jid)) return;
+
     if (text) addToHistory(jid, msg.pushName || senderJid.split('@')[0], text);
 
     // ── תגובה לבוט → AI ───────────────────────────────────────
@@ -97,9 +100,10 @@ async function handleGroupMessage(sock, msg) {
     }
 
     const funHandled = await handleFunCommand(sock, msg, jid, text, msg.pushName || '', groupParticipants, senderJid);
-    if (funHandled) return;
+    if (funHandled) { incrementDailyCount(jid); return; }
 
-    await handleAdminCommand(sock, msg, jid, text, senderJid, isSenderAdmin, isBotAdmin);
+    const adminHandled = await handleAdminCommand(sock, msg, jid, text, senderJid, isSenderAdmin, isBotAdmin);
+    if (adminHandled) incrementDailyCount(jid);
 }
 
 async function handleGroupParticipantUpdate(sock, id, participants, action) {
