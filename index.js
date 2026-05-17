@@ -6,6 +6,7 @@ const crm = require('./crm');
 const { generateQuote } = require('./quote');
 const { generateContract } = require('./contract');
 const { handleGroupMessage, handleGroupParticipantUpdate } = require('./group-bot');
+const { handlePrivateMessage } = require('./private-bot');
 const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion } = require('@whiskeysockets/baileys');
 const { Boom } = require('@hapi/boom');
 const pino = require('pino');
@@ -861,6 +862,10 @@ async function startBot() {
                     await handleGroupMessage(sock, msg);
                     continue;
                 }
+
+                // Private messages → private-bot handler
+                await handlePrivateMessage(sock, msg);
+                continue;
 
                 let userText = getText(msg);
                 const hasAudio = !!(msg.message?.audioMessage);

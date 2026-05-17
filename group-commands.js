@@ -397,7 +397,7 @@ function getLockedCommandName(text) {
     return null;
 }
 
-async function handleFunCommand(sock, msg, jid, text, pushName, groupParticipants, senderJid = '') {
+async function handleFunCommand(sock, msg, jid, text, pushName, groupParticipants, senderJid = '', isPrivate = false) {
     const t = Date.now();
     try {
 
@@ -1025,7 +1025,7 @@ async function handleFunCommand(sock, msg, jid, text, pushName, groupParticipant
 
         // ── שיר ───────────────────────────────────────────────────
         if (text.startsWith('שיר ')) {
-            if (!isPremiumEnabled(jid, 'שיר')) { await sock.sendMessage(jid, { text: '🔒 פקודת *שיר* אינה זמינה בקבוצה זו.' }); return true; }
+            if (!isPrivate && !isPremiumEnabled(jid, 'שיר')) { await sock.sendMessage(jid, { text: '🔒 פקודת *שיר* אינה זמינה בקבוצה זו.' }); return true; }
             const query = text.slice('שיר '.length).trim();
             // Direct YouTube URL → old single-step download
             if (query.match(/(?:v=|youtu\.be\/)([A-Za-z0-9_-]{11})/)) {
@@ -1050,7 +1050,7 @@ async function handleFunCommand(sock, msg, jid, text, pushName, groupParticipant
 
         // ── סרט ───────────────────────────────────────────────────
         if (text.startsWith('סרט ')) {
-            if (!isPremiumEnabled(jid, 'סרט')) { await sock.sendMessage(jid, { text: '🔒 פקודת *סרט* אינה זמינה בקבוצה זו.' }); return true; }
+            if (!isPrivate && !isPremiumEnabled(jid, 'סרט')) { await sock.sendMessage(jid, { text: '🔒 פקודת *סרט* אינה זמינה בקבוצה זו.' }); return true; }
             const movieQuery = text.slice('סרט '.length).trim();
             await sock.sendMessage(jid, { text: `🎬 מחפש: *${movieQuery}*...` }, { quoted: msg });
             try {
@@ -1090,7 +1090,7 @@ async function handleFunCommand(sock, msg, jid, text, pushName, groupParticipant
 
         // ── תמונה ─────────────────────────────────────────────────
         if (text.startsWith('תמונה ')) {
-            if (!isPremiumEnabled(jid, 'תמונה')) { await sock.sendMessage(jid, { text: '🔒 פקודת *תמונה* אינה זמינה בקבוצה זו.' }); return true; }
+            if (!isPrivate && !isPremiumEnabled(jid, 'תמונה')) { await sock.sendMessage(jid, { text: '🔒 פקודת *תמונה* אינה זמינה בקבוצה זו.' }); return true; }
             const prompt = text.slice('תמונה '.length).trim();
             await sock.sendMessage(jid, { text: `🎨 יוצר תמונה: *${prompt}*\n⏳ כ-10 שניות...` }, { quoted: msg });
             try {

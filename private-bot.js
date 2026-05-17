@@ -1,0 +1,153 @@
+'use strict';
+
+const Groq = require('groq-sdk');
+const fs = require('fs');
+const path = require('path');
+const { handleFunCommand } = require('./group-commands');
+
+const SUPER_ADMINS = new Set(['972522091733', '972508181322', '98668719951947', '188150102098030']);
+
+const DATA_DIR = fs.existsSync('/data') ? '/data' : path.join(__dirname, 'data');
+const SETTINGS_FILE = path.join(DATA_DIR, 'private-settings.json');
+
+let privateMode = 'all'; // 'all' | 'none' | 'whitelist'
+let privateWhitelist = new Set();
+
+function loadSettings() {
+    try {
+        if (!fs.existsSync(SETTINGS_FILE)) return;
+        const data = JSON.parse(fs.readFileSync(SETTINGS_FILE, 'utf8'));
+        privateMode = data.mode || 'all';
+        privateWhitelist = new Set(data.whitelist || []);
+        console.log(`✅ Private settings loaded (mode=${privateMode} whitelist=${privateWhitelist.size})`);
+    } catch (e) { console.error('private settings load error:', e.message); }
+}
+
+function saveSettings() {
+    try {
+        if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+        fs.writeFileSync(SETTINGS_FILE, JSON.stringify({ mode: privateMode, whitelist: [...privateWhitelist] }, null, 2));
+    } catch {}
+}
+
+loadSettings();
+
+function isOwner(jid) {
+    return SUPER_ADMINS.has(jid.split('@')[0]);
+}
+
+function canRespond(jid) {
+    if (isOwner(jid)) return true;
+    if (privateMode === 'all') return true;
+    if (privateMode === 'none') return false;
+    return privateWhitelist.has(jid);
+}
+
+function normalizePhone(input) {
+    const digits = input.replace(/\D/g, '');
+    return digits.startsWith('972') ? digits : `972${digits.replace(/^0/, '')}`;
+}
+
+const GROQ_KEYS = [process.env.GROQ_API_KEY, process.env.GROQ_API_KEY_2, process.env.GROQ_API_KEY_3].filter(Boolean);
+let groqKeyIdx = 0;
+const dmHistory = new Map();
+
+async function askGroq(jid, text) {
+    if (!dmHistory.has(jid)) dmHistory.set(jid, []);
+    const history = dmHistory.get(jid);
+    history.push({ role: 'user', content: text });
+    if (history.length > 16) history.splice(0, history.length - 16);
+
+    for (let i = 0; i < GROQ_KEYS.length; i++) {
+        try {
+            const client = new Groq({ apiKey: GROQ_KEYS[groqKeyIdx % GROQ_KEYS.length] });
+            const r = await client.chat.completions.create({
+                model: 'llama-3.3-70b-versatile',
+                messages: [
+                    { role: 'system', content: 'אתה בוט ווטסאפ חכם ומצחיק. ענה בעברית, עם אמוג\'י. אם ביקשו תשובה ארוכה — תן אותה.' },
+                    ...history,
+                ],
+                max_tokens: 1500,
+                temperature: 0.8,
+            });
+            const reply = r.choices[0]?.message?.content?.trim() || null;
+            if (reply) {
+                history.push({ role: 'assistant', content: reply });
+                if (history.length > 16) history.splice(0, history.length - 16);
+            }
+            return reply;
+        } catch (err) {
+            if ((err.status === 429 || err.message?.includes('429')) && i < GROQ_KEYS.length - 1) { groqKeyIdx++; continue; }
+            console.error('private groq error:', err.message?.slice(0, 80));
+            return null;
+        }
+    }
+    return null;
+}
+
+function getText(msg) {
+    return msg.message?.conversation
+        || msg.message?.extendedTextMessage?.text
+        || msg.message?.imageMessage?.caption
+        || '';
+}
+
+async function handlePrivateMessage(sock, msg) {
+    const jid = msg.key.remoteJid;
+    const text = getText(msg).trim();
+    if (!text) return;
+
+    console.log(`📩 [פרטי] ${jid.split('@')[0]}: ${text.slice(0, 60)}`);
+
+    // ── פקודות בעלים ──────────────────────────────────────────────
+    if (isOwner(jid)) {
+        if (text === 'פרטי הכל') {
+            privateMode = 'all'; saveSettings();
+            await sock.sendMessage(jid, { text: '✅ הבוט יענה לכולם בפרטי.' }); return;
+        }
+        if (text === 'פרטי כבוי') {
+            privateMode = 'none'; saveSettings();
+            await sock.sendMessage(jid, { text: '🔕 הבוט לא יענה לאף אחד בפרטי (מלבד הבעלים).' }); return;
+        }
+        if (text === 'פרטי רשימה') {
+            const modeText = privateMode === 'all' ? '🌍 עונה לכולם' : privateMode === 'none' ? '🔕 לא עונה לאף אחד' : `📋 רשימה לבנה`;
+            const list = privateWhitelist.size > 0
+                ? '\n\n' + [...privateWhitelist].map(j => `• +${j.split('@')[0]}`).join('\n')
+                : '\n\n_(הרשימה ריקה)_';
+            await sock.sendMessage(jid, { text: `📱 *הגדרות פרטי:*\nמצב: ${modeText}${privateMode === 'whitelist' ? list : ''}` }); return;
+        }
+        if (text.startsWith('פרטי הוסף ')) {
+            const phone = normalizePhone(text.slice('פרטי הוסף '.length));
+            const targetJid = `${phone}@s.whatsapp.net`;
+            privateWhitelist.add(targetJid);
+            if (privateMode !== 'whitelist') { privateMode = 'whitelist'; }
+            saveSettings();
+            await sock.sendMessage(jid, { text: `✅ +${phone} נוסף לרשימה המורשים.\nמצב: רשימה לבנה (${privateWhitelist.size} אנשים)` }); return;
+        }
+        if (text.startsWith('פרטי הסר ')) {
+            const phone = normalizePhone(text.slice('פרטי הסר '.length));
+            const targetJid = `${phone}@s.whatsapp.net`;
+            privateWhitelist.delete(targetJid);
+            saveSettings();
+            await sock.sendMessage(jid, { text: `🗑️ +${phone} הוסר מהרשימה. (${privateWhitelist.size} נשארו)` }); return;
+        }
+    }
+
+    // ── בדיקת הרשאה ──────────────────────────────────────────────
+    if (!canRespond(jid)) return;
+
+    // ── פקודות קבוצה (ללא בדיקת פרימיום) ───────────────────────
+    // Override isPremiumEnabled for private chats — always allow
+    const handled = await handleFunCommand(sock, msg, jid, text, msg.pushName || '', [], jid, true);
+    if (handled) return;
+
+    // ── AI לכל הודעה אחרת ────────────────────────────────────────
+    const reply = await askGroq(jid, text);
+    if (reply) {
+        await sock.sendMessage(jid, { text: reply });
+    } else {
+        await sock.sendMessage(jid, { text: 'מצטער, לא הצלחתי לחשוב כרגע 😅' });
+    }
+}
+
+module.exports = { handlePrivateMessage };
