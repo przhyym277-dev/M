@@ -288,51 +288,14 @@ async function downloadAsMp4(url, title) {
     return { buffer, title: info.videoDetails.title || title };
 }
 
-const TRACKERS = [
-    'udp://open.demonii.com:1337/announce',
-    'udp://tracker.openbittorrent.com:80',
-    'udp://tracker.opentrackr.org:1337/announce',
-].map(t => `&tr=${encodeURIComponent(t)}`).join('');
-
-async function getTorrentLinks(imdbId, movieTitle) {
-    // YTS API — high quality, clean JSON, public
-    try {
-        console.log(`🎬 YTS search: ${imdbId}`);
-        const res = await downloadBuffer(`https://yts.mx/api/v2/list_movies.json?query_term=${imdbId}&limit=1`, 10000);
-        const data = JSON.parse(res.toString());
-        const movie = data?.data?.movies?.[0];
-        if (movie?.torrents?.length) {
-            console.log(`✅ YTS: ${movie.torrents.length} torrents`);
-            return movie.torrents.slice(0, 4).map(t => ({
-                quality: t.quality,
-                size: t.size,
-                magnet: `magnet:?xt=urn:btih:${t.hash}&dn=${encodeURIComponent(movie.title_english || movie.title)}${TRACKERS}`,
-            }));
-        }
-    } catch (e) { console.error('YTS error:', e.message); }
-
-    // The Pirate Bay API — fallback
-    try {
-        const q = movieTitle ? encodeURIComponent(movieTitle) : imdbId;
-        console.log(`🎬 TPB search: ${q}`);
-        const res = await downloadBuffer(`https://apibay.org/q.php?q=${q}&cat=207`, 10000);
-        const data = JSON.parse(res.toString());
-        if (Array.isArray(data) && data.length && data[0].id !== '0') {
-            console.log(`✅ TPB: ${data.length} results`);
-            const seen = new Set();
-            return data.slice(0, 8).map(t => {
-                let quality = 'HD';
-                if (/2160p|4k/i.test(t.name)) quality = '4K';
-                else if (/1080p/i.test(t.name)) quality = '1080p';
-                else if (/720p/i.test(t.name)) quality = '720p';
-                const bytes = parseInt(t.size);
-                const size = bytes > 1e9 ? `${(bytes/1e9).toFixed(1)}GB` : `${Math.round(bytes/1e6)}MB`;
-                return { quality, size, magnet: `magnet:?xt=urn:btih:${t.info_hash}&dn=${encodeURIComponent(t.name.slice(0,60))}${TRACKERS}` };
-            }).filter(t => { if (seen.has(t.quality)) return false; seen.add(t.quality); return true; }).slice(0, 4);
-        }
-    } catch (e) { console.error('TPB error:', e.message); }
-
-    return [];
+function getTorrentSearchLinks(movieTitle, year) {
+    const q = encodeURIComponent(`${movieTitle} ${year || ''}`.trim());
+    const qPlain = encodeURIComponent(movieTitle);
+    return [
+        `🔹 *YTS:* https://yts.mx/movies/${encodeURIComponent(movieTitle.toLowerCase().replace(/\s+/g, '-'))}-${year || ''}`,
+        `🔹 *1337x:* https://www.1337x.to/search/${q}/1/`,
+        `🔹 *TPB:* https://thepiratebay.org/search.php?q=${qPlain}&cat=207`,
+    ].join('\n');
 }
 
 async function generateImage(prompt) {
@@ -467,16 +430,8 @@ async function handleFunCommand(sock, msg, jid, text, pushName, groupParticipant
                         if (m.overview) replyText += `\n\n📖 ${m.overview.slice(0, 200)}`;
                         await sock.sendMessage(jid, { text: replyText }, { quoted: msg });
                         if (imdbId) {
-                            const torrents = await getTorrentLinks(imdbId, m.title);
-                            if (torrents.length) {
-                                let torrentText = `🔗 *קישורי הורדה - ${m.title}:*\n📲 לחץ → נפתח בתוכנת הטורנטים\n`;
-                                for (const t of torrents) {
-                                    torrentText += `\n*${t.quality}*${t.size ? ` (${t.size})` : ''}:\n${t.magnet}\n`;
-                                }
-                                await sock.sendMessage(jid, { text: torrentText });
-                            } else {
-                                await sock.sendMessage(jid, { text: '⚠️ לא נמצאו קישורי הורדה לסרט זה' });
-                            }
+                            const searchLinks = getTorrentSearchLinks(m.title, year);
+                            await sock.sendMessage(jid, { text: `🔗 *הורדה - ${m.title}:*\n📲 לחץ → בחר טורנט → פתח עם uTorrent/Stremio\n\n${searchLinks}` });
                         }
                     } catch (e) {
                         await sock.sendMessage(jid, { text: `❌ שגיאה: ${e.message?.slice(0, 60)}` });
@@ -1120,16 +1075,8 @@ async function handleFunCommand(sock, msg, jid, text, pushName, groupParticipant
                     if (m.overview) replyText += `\n\n📖 ${m.overview.slice(0, 200)}`;
                     await sock.sendMessage(jid, { text: replyText }, { quoted: msg });
                     if (imdbId) {
-                        const torrents = await getTorrentLinks(imdbId);
-                        if (torrents.length) {
-                            let torrentText = `🔗 *קישורי הורדה - ${m.title}:*\n📲 לחץ → נפתח בתוכנת הטורנטים\n`;
-                            for (const t of torrents) {
-                                torrentText += `\n*${t.quality}*${t.size ? ` (${t.size})` : ''}:\n${t.magnet}\n`;
-                            }
-                            await sock.sendMessage(jid, { text: torrentText });
-                        } else {
-                            await sock.sendMessage(jid, { text: '⚠️ לא נמצאו קישורי הורדה לסרט זה' });
-                        }
+                        const searchLinks = getTorrentSearchLinks(m.title, year);
+                        await sock.sendMessage(jid, { text: `🔗 *הורדה - ${m.title}:*\n📲 לחץ → בחר טורנט → פתח עם uTorrent/Stremio\n\n${searchLinks}` });
                     }
                 } else {
                     const moviesList = movies.map((m, i) => `${i + 1}. *${m.title}* ${m.release_date ? `(${m.release_date.slice(0,4)})` : ''}`).join('\n');
