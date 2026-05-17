@@ -37,10 +37,17 @@ function isOwner(jid) {
 }
 
 function canRespond(jid) {
-    if (isOwner(jid)) return true;
+    const nid = normJid(jid);
+    if (isOwner(nid)) return true;
     if (privateMode === 'all') return true;
     if (privateMode === 'none') return false;
-    return privateWhitelist.has(jid);
+    if (privateWhitelist.has(nid)) return true;
+    // fallback: compare by phone number only (strips domain)
+    const phone = nid.split('@')[0].replace(/\D/g, '');
+    for (const w of privateWhitelist) {
+        if (w.split('@')[0].replace(/\D/g, '') === phone) return true;
+    }
+    return false;
 }
 
 function normalizePhone(input) {
@@ -85,6 +92,8 @@ async function askGroq(jid, text) {
     return null;
 }
 
+const normJid = (id) => (id || '').replace(/:.*@/, '@');
+
 function getText(msg) {
     return msg.message?.conversation
         || msg.message?.extendedTextMessage?.text
@@ -93,11 +102,11 @@ function getText(msg) {
 }
 
 async function handlePrivateMessage(sock, msg) {
-    const jid = msg.key.remoteJid;
+    const jid = normJid(msg.key.remoteJid);
     const text = getText(msg).trim();
     if (!text) return;
 
-    console.log(`📩 [פרטי] ${jid.split('@')[0]}: ${text.slice(0, 60)}`);
+    console.log(`📩 [פרטי] jid=${jid} mode=${privateMode} whitelist=${privateWhitelist.size}: ${text.slice(0, 60)}`);
 
     // ── פקודות בעלים ──────────────────────────────────────────────
     if (isOwner(jid)) {
