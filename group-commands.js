@@ -289,7 +289,7 @@ async function downloadAsMp4(url, title) {
 }
 
 function getWatchLink(imdbId, movieTitle) {
-    return `https://www.2embed.cc/embed/${imdbId}`;
+    return `https://vidsrc.me/embed/movie/${imdbId}`;
 }
 
 async function generateImage(prompt) {
