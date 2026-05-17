@@ -4,7 +4,7 @@ const Groq = require('groq-sdk');
 const { handleFunCommand, addToHistory } = require('./group-commands');
 const { handleAdminCommand, handleAutoModeration, handleWelcome } = require('./group-admin');
 
-const GLOBAL_SUPER_ADMINS = new Set(['972522091733', '972508181322']);
+const GLOBAL_SUPER_ADMINS = new Set(['972522091733', '972508181322', '98668719951947', '188150102098030']);
 const BOT_OWNERS = { '972522091733': 'יאיר פרץ', '972508181322': 'יאיר פריש' };
 const GROQ_KEYS = [process.env.GROQ_API_KEY, process.env.GROQ_API_KEY_2, process.env.GROQ_API_KEY_3].filter(Boolean);
 let groqKeyIdx = 0;
