@@ -643,8 +643,8 @@ async function handleFunCommand(sock, msg, jid, text, pushName, groupParticipant
                 try {
                     const r = await getGroqClient().chat.completions.create({
                         model: 'llama-3.3-70b-versatile',
-                        messages: [{ role: 'system', content: 'אתה בוט חברים חכם ומצחיק. עברית, קצר, אמוג\'י.' }, ...history],
-                        max_tokens: 300, temperature: 0.8,
+                        messages: [{ role: 'system', content: 'אתה בוט חברים חכם ומצחיק. עברית, אמוג\'י. אם ביקשו תשובה ארוכה — תן תשובה ארוכה ומלאה.' }, ...history],
+                        max_tokens: 1500, temperature: 0.8,
                     });
                     reply = r.choices[0]?.message?.content?.trim() || null;
                     break;
