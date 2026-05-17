@@ -404,6 +404,29 @@ async function handleFunCommand(sock, msg, jid, text, pushName, groupParticipant
             const expired = Date.now() > pending.expiresAt;
             console.log(`⏳ pending: type=${pending.type} expired=${expired} results=${pending.results?.length}`);
             if (expired) { pendingUserActions.delete(pendingKey); }
+            else if (pending.type === 'movie_results') {
+                const n = parseInt(text.trim(), 10);
+                if (!isNaN(n) && n >= 1 && n <= pending.movies.length) {
+                    const m = pending.movies[n - 1];
+                    pendingUserActions.delete(pendingKey);
+                    try {
+                        const TMDB_KEY = process.env.TMDB_API_KEY || 'e7eac9b0420be7d93d03abfd76f5eac0';
+                        const imdbRes = await downloadBuffer(`https://api.themoviedb.org/3/movie/${m.id}/external_ids?api_key=${TMDB_KEY}`, 8000);
+                        const imdbData = JSON.parse(imdbRes.toString());
+                        const imdbId = imdbData.imdb_id;
+                        const year = m.release_date ? m.release_date.slice(0, 4) : '';
+                        const rating = m.vote_average ? `⭐ ${m.vote_average.toFixed(1)}/10` : '';
+                        const stremioLink = imdbId ? `https://web.strem.io/#/detail/movie/${imdbId}` : null;
+                        let replyText = `🎬 *${m.title}*${year ? ` (${year})` : ''}\n${rating}`;
+                        if (m.overview) replyText += `\n\n📖 ${m.overview.slice(0, 200)}`;
+                        if (stremioLink) replyText += `\n\n▶️ *צפה ב-Stremio:*\n${stremioLink}`;
+                        await sock.sendMessage(jid, { text: replyText }, { quoted: msg });
+                    } catch (e) {
+                        await sock.sendMessage(jid, { text: `❌ שגיאה: ${e.message?.slice(0, 60)}` });
+                    }
+                    return true;
+                }
+            }
             else if (pending.type === 'song_results') {
                 const n = parseInt(text.trim(), 10);
                 console.log(`🎵 song pick attempt: n=${n} max=${pending.results?.length} valid=${!isNaN(n) && n >= 1 && n <= pending.results.length}`);
@@ -531,6 +554,7 @@ async function handleFunCommand(sock, msg, jid, text, pushName, groupParticipant
 • \`חזור [טקסט]\` 🦜 • \`qr [טקסט]\`
 • \`תמלל\` (כתגובה להקלטה)
 • \`שיר [שם / URL]\` — חיפוש 10 תוצאות + הורדה 🎵
+• \`סרט [שם]\` — חיפוש סרט + קישור Stremio 🎬
 • \`תמונה [תיאור]\` — יצירת תמונה 🎨
 • \`סטיקר [תיאור]\` — יצירת סטיקר 🖼️
 • \`משחקים\` — ניחוש / איקס עיגול 🎮
@@ -1012,6 +1036,43 @@ async function handleFunCommand(sock, msg, jid, text, pushName, groupParticipant
             const list = results.map((r, i) => `${i + 1}. ${r.title}${r.duration ? ` (${r.duration})` : ''}`).join('\n');
             await sock.sendMessage(jid, { text: `🎵 *תוצאות עבור "${query}":*\n\n${list}\n\nשלח מספר 1-${results.length} לבחירה` }, { quoted: msg });
             pendingUserActions.set(pendingKey, { type: 'song_results', results, expiresAt: Date.now() + 5 * 60 * 1000 });
+            return true;
+        }
+
+        // ── סרט ───────────────────────────────────────────────────
+        if (text.startsWith('סרט ')) {
+            const movieQuery = text.slice('סרט '.length).trim();
+            await sock.sendMessage(jid, { text: `🎬 מחפש: *${movieQuery}*...` }, { quoted: msg });
+            try {
+                const TMDB_KEY = process.env.TMDB_API_KEY || 'e7eac9b0420be7d93d03abfd76f5eac0';
+                const searchUrl = `https://api.themoviedb.org/3/search/movie?api_key=${TMDB_KEY}&query=${encodeURIComponent(movieQuery)}&language=he-IL`;
+                const searchRes = await downloadBuffer(searchUrl, 10000);
+                const searchData = JSON.parse(searchRes.toString());
+                const movies = (searchData.results || []).slice(0, 5);
+                if (!movies.length) {
+                    await sock.sendMessage(jid, { text: '❌ לא נמצא סרט כזה' }); return true;
+                }
+                if (movies.length === 1 || movies[0].title?.toLowerCase() === movieQuery.toLowerCase()) {
+                    const m = movies[0];
+                    const imdbRes = await downloadBuffer(`https://api.themoviedb.org/3/movie/${m.id}/external_ids?api_key=${TMDB_KEY}`, 8000);
+                    const imdbData = JSON.parse(imdbRes.toString());
+                    const imdbId = imdbData.imdb_id;
+                    const year = m.release_date ? m.release_date.slice(0, 4) : '';
+                    const rating = m.vote_average ? `⭐ ${m.vote_average.toFixed(1)}/10` : '';
+                    const stremioLink = imdbId ? `https://web.strem.io/#/detail/movie/${imdbId}` : null;
+                    let replyText = `🎬 *${m.title}*${year ? ` (${year})` : ''}\n${rating}`;
+                    if (m.overview) replyText += `\n\n📖 ${m.overview.slice(0, 200)}`;
+                    if (stremioLink) replyText += `\n\n▶️ *צפה ב-Stremio:*\n${stremioLink}`;
+                    await sock.sendMessage(jid, { text: replyText }, { quoted: msg });
+                } else {
+                    const moviesList = movies.map((m, i) => `${i + 1}. *${m.title}* ${m.release_date ? `(${m.release_date.slice(0,4)})` : ''}`).join('\n');
+                    await sock.sendMessage(jid, { text: `🎬 *נמצאו כמה סרטים:*\n\n${moviesList}\n\nשלח מספר 1-${movies.length} לבחירה` }, { quoted: msg });
+                    pendingUserActions.set(pendingKey, { type: 'movie_results', movies, expiresAt: Date.now() + 5 * 60 * 1000 });
+                }
+            } catch (e) {
+                console.error('movie search error:', e.message);
+                await sock.sendMessage(jid, { text: `❌ שגיאה בחיפוש סרט: ${e.message?.slice(0, 60)}` });
+            }
             return true;
         }
 
