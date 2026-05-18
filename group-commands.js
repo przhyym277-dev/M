@@ -1514,21 +1514,35 @@ async function handleFunCommand(sock, msg, jid, text, pushName, groupParticipant
             const dlUrl = text.slice('הורד '.length).trim();
             if (!dlUrl.startsWith('http')) { await sock.sendMessage(jid, { text: '⚠️ כתוב: הורד [קישור יוטיוב/אינסטגרם/טיקטוק]' }); return true; }
             await sock.sendMessage(jid, { text: '⬇️ מוריד...' }, { quoted: msg });
-            try {
-                const info = await youtubedl(dlUrl, {
-                    ...YTDL_COMMON,
-                    dumpSingleJson: true,
-                    format: 'bestvideo[height<=480][ext=mp4]+bestaudio[ext=m4a]/best[height<=480]/best',
-                    noPlaylist: true,
-                });
-                if (!info?.url) throw new Error('לא ניתן לקבל קישור');
-                if ((info.duration || 0) > 180) throw new Error('הסרטון ארוך מדי (מקסימום 3 דקות)');
-                const vidBuf = await downloadBuffer(info.url, 90000);
-                if (vidBuf.length > 50 * 1024 * 1024) throw new Error('הסרטון גדול מדי (מעל 50MB)');
-                await sock.sendMessage(jid, { video: vidBuf, caption: `🎬 ${info.title || ''}` }, { quoted: msg });
-            } catch (e) {
-                await sock.sendMessage(jid, { text: `❌ לא ניתן להוריד: ${e.message?.slice(0, 100)}` });
+            const DL_OPTS = [
+                { extractorArgs: 'youtube:player_client=ios' },
+                { extractorArgs: 'youtube:player_client=android' },
+                { extractorArgs: 'youtube:player_client=tv_embedded' },
+            ];
+            let lastErr = null;
+            for (const extra of DL_OPTS) {
+                try {
+                    const info = await youtubedl(dlUrl, {
+                        noWarnings: true, noCheckCertificates: true,
+                        jsRuntimes: `node:${process.execPath}`,
+                        ...(fs.existsSync(COOKIES_FILE) ? { cookies: COOKIES_FILE } : {}),
+                        ...extra,
+                        dumpSingleJson: true,
+                        format: 'best[height<=480]/best',
+                        noPlaylist: true,
+                    });
+                    if (!info?.url) { lastErr = new Error('לא ניתן לקבל קישור'); continue; }
+                    if ((info.duration || 0) > 180) throw new Error('הסרטון ארוך מדי (מקסימום 3 דקות)');
+                    const vidBuf = await downloadBuffer(info.url, 90000);
+                    if (vidBuf.length > 50 * 1024 * 1024) throw new Error('הסרטון גדול מדי (מעל 50MB)');
+                    await sock.sendMessage(jid, { video: vidBuf, caption: `🎬 ${info.title || ''}` }, { quoted: msg });
+                    lastErr = null; break;
+                } catch (e) {
+                    lastErr = e;
+                    if (!e.message?.includes('Sign in') && !e.message?.includes('bot') && !e.message?.includes('ניתן לקבל')) break;
+                }
             }
+            if (lastErr) await sock.sendMessage(jid, { text: `❌ לא ניתן להוריד: ${lastErr.message?.slice(0, 100)}` });
             return true;
         }
 
