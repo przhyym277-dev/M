@@ -53,25 +53,21 @@ function loadSettings() {
     }
 }
 
-let _saveTimer = null;
 function saveSettings() {
-    clearTimeout(_saveTimer);
-    _saveTimer = setTimeout(() => {
-        try {
-            if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
-            const data = {
-                groupSettings: Object.fromEntries(groupSettings),
-                lockedCommands: Object.fromEntries([...lockedCommands].map(([k, v]) => [k, [...v]])),
-                warnings: Object.fromEntries([...warnings].map(([gid, m]) => [gid, Object.fromEntries(m)])),
-                welcomeTemplates: Object.fromEntries(groupWelcomeTemplates),
-                premiumSettings: Object.fromEntries(premiumSettings),
-                dailyLimits: Object.fromEntries(dailyLimits),
-            };
-            fs.writeFileSync(SETTINGS_FILE, JSON.stringify(data, null, 2), 'utf8');
-        } catch (e) {
-            console.error('Failed to save group settings:', e.message);
-        }
-    }, 500);
+    try {
+        if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+        const data = {
+            groupSettings: Object.fromEntries(groupSettings),
+            lockedCommands: Object.fromEntries([...lockedCommands].map(([k, v]) => [k, [...v]])),
+            warnings: Object.fromEntries([...warnings].map(([gid, m]) => [gid, Object.fromEntries(m)])),
+            welcomeTemplates: Object.fromEntries(groupWelcomeTemplates),
+            premiumSettings: Object.fromEntries(premiumSettings),
+            dailyLimits: Object.fromEntries(dailyLimits),
+        };
+        fs.writeFileSync(SETTINGS_FILE, JSON.stringify(data, null, 2), 'utf8');
+    } catch (e) {
+        console.error('Failed to save group settings:', e.message);
+    }
 }
 
 loadSettings();
@@ -105,7 +101,7 @@ function getLockedSet(gid) {
 }
 
 function getPremium(gid) {
-    if (!premiumSettings.has(gid)) premiumSettings.set(gid, { שיר: true, סרט: true, תמונה: true });
+    if (!premiumSettings.has(gid)) premiumSettings.set(gid, {});
     return premiumSettings.get(gid);
 }
 
