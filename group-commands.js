@@ -1511,7 +1511,6 @@ async function handleFunCommand(sock, msg, jid, text, pushName, groupParticipant
 
         // ── הורד ──────────────────────────────────────────────────
         if (text.startsWith('הורד ')) {
-            if (!isPrivate && !isPremiumEnabled(jid, 'הורד')) { await sock.sendMessage(jid, { text: '🔒 פקודת *הורד* אינה זמינה בקבוצה זו.' }); return true; }
             const dlUrl = text.slice('הורד '.length).trim();
             if (!dlUrl.startsWith('http')) { await sock.sendMessage(jid, { text: '⚠️ כתוב: הורד [קישור יוטיוב/אינסטגרם/טיקטוק]' }); return true; }
             await sock.sendMessage(jid, { text: '⬇️ מוריד...' }, { quoted: msg });
@@ -1535,7 +1534,6 @@ async function handleFunCommand(sock, msg, jid, text, pushName, groupParticipant
 
         // ── mp4 ───────────────────────────────────────────────────
         if (text.startsWith('mp4 ')) {
-            if (!isPrivate && !isPremiumEnabled(jid, 'mp4')) { await sock.sendMessage(jid, { text: '🔒 פקודת *mp4* אינה זמינה בקבוצה זו.' }); return true; }
             const mp4Query = text.slice('mp4 '.length).trim();
             await sock.sendMessage(jid, { text: `🎬 מחפש: *${mp4Query}*...` }, { quoted: msg });
             try {
