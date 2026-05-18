@@ -420,7 +420,7 @@ const LOCKABLE_PREFIXES = [
     ['הגרלה ','הגרלה'],['חשב ','חשב'],['חזור ','חזור'],['מזל ','מזל'],
     ['qr ','qr'],['QR ','qr'],['פרופיל ','פרופיל'],
     ['תמונה ','תמונה'],['סטיקר ','סטיקר'],
-    ['קצר ','קצר'],['ספר ','ספר'],['פילטר ','פילטר'],['הורד ','הורד'],['mp4 ','mp4'],
+    ['קצר ','קצר'],['ספר ','ספר'],['פילטר ','פילטר'],['mp4 ','mp4'],
 ];
 const LOCKABLE_EXACT = new Set(['בדיחות','טיפ','עובדה','ציטוט','טריוויה','חידה','נכון או אמת','שידוך','רולטה','סיכום','תמלל','פרופיל','משחקים','ניחוש','איקס עיגול','4 בשורה','ניתוח קבוצה','ראפ בטל','תליון','דירוג','סטיקר']);
 
@@ -719,7 +719,6 @@ async function handleFunCommand(sock, msg, jid, text, pushName, groupParticipant
 • \`שיר [שם / URL]\` — הורדת שיר 🎵
 • \`סרט [שם]\` — חיפוש + צפייה 🎬
 • \`סדרה [שם]\` — בחר עונה ופרק 📺
-• \`הורד [קישור]\` — יוטיוב/אינסטגרם/טיקטוק ⬇️
 • \`mp4 [שם]\` — קליפ לפי שם שיר 🎬
 • \`תמונה [תיאור]\` — יצירת תמונה 🎨
 • \`סטיקר [תיאור]\` — יצירת סטיקר 🖼️
@@ -1509,42 +1508,6 @@ async function handleFunCommand(sock, msg, jid, text, pushName, groupParticipant
             return true;
         }
 
-        // ── הורד ──────────────────────────────────────────────────
-        if (text.startsWith('הורד ')) {
-            const dlUrl = text.slice('הורד '.length).trim();
-            if (!dlUrl.startsWith('http')) { await sock.sendMessage(jid, { text: '⚠️ כתוב: הורד [קישור יוטיוב/אינסטגרם/טיקטוק]' }); return true; }
-            await sock.sendMessage(jid, { text: '⬇️ מוריד...' }, { quoted: msg });
-            const DL_OPTS = [
-                { extractorArgs: 'youtube:player_client=ios' },
-                { extractorArgs: 'youtube:player_client=android' },
-                { extractorArgs: 'youtube:player_client=tv_embedded' },
-            ];
-            let lastErr = null;
-            for (const extra of DL_OPTS) {
-                try {
-                    const info = await youtubedl(dlUrl, {
-                        noWarnings: true, noCheckCertificates: true,
-                        jsRuntimes: `node:${process.execPath}`,
-                        ...(fs.existsSync(COOKIES_FILE) ? { cookies: COOKIES_FILE } : {}),
-                        ...extra,
-                        dumpSingleJson: true,
-                        format: 'best[height<=480]/best',
-                        noPlaylist: true,
-                    });
-                    if (!info?.url) { lastErr = new Error('לא ניתן לקבל קישור'); continue; }
-                    if ((info.duration || 0) > 180) throw new Error('הסרטון ארוך מדי (מקסימום 3 דקות)');
-                    const vidBuf = await downloadBuffer(info.url, 90000);
-                    if (vidBuf.length > 50 * 1024 * 1024) throw new Error('הסרטון גדול מדי (מעל 50MB)');
-                    await sock.sendMessage(jid, { video: vidBuf, caption: `🎬 ${info.title || ''}` }, { quoted: msg });
-                    lastErr = null; break;
-                } catch (e) {
-                    lastErr = e;
-                    if (!e.message?.includes('Sign in') && !e.message?.includes('bot') && !e.message?.includes('ניתן לקבל')) break;
-                }
-            }
-            if (lastErr) await sock.sendMessage(jid, { text: `❌ לא ניתן להוריד: ${lastErr.message?.slice(0, 100)}` });
-            return true;
-        }
 
         // ── mp4 ───────────────────────────────────────────────────
         if (text.startsWith('mp4 ')) {
