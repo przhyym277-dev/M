@@ -420,8 +420,11 @@ const LOCKABLE_PREFIXES = [
     ['הגרלה ','הגרלה'],['חשב ','חשב'],['חזור ','חזור'],['מזל ','מזל'],
     ['qr ','qr'],['QR ','qr'],['פרופיל ','פרופיל'],
     ['תמונה ','תמונה'],['סטיקר ','סטיקר'],
+    ['קצר ','קצר'],['ספר ','ספר'],['פילטר ','פילטר'],['הורד ','הורד'],['mp4 ','mp4'],
 ];
-const LOCKABLE_EXACT = new Set(['בדיחות','טיפ','עובדה','ציטוט','טריוויה','חידה','נכון או אמת','שידוך','רולטה','סיכום','תמלל','פרופיל','משחקים','ניחוש','איקס עיגול','4 בשורה','ניתוח קבוצה','ראפ בטל']);
+const LOCKABLE_EXACT = new Set(['בדיחות','טיפ','עובדה','ציטוט','טריוויה','חידה','נכון או אמת','שידוך','רולטה','סיכום','תמלל','פרופיל','משחקים','ניחוש','איקס עיגול','4 בשורה','ניתוח קבוצה','ראפ בטל','תליון','דירוג','סטיקר']);
+
+const HANGMAN_WORDS = ['ספר','בית','כלב','חתול','מחשב','תפוח','ירושלים','ים','הר','עץ','אריה','פיל','פרפר','שיר','חלון','מכונית','אוטובוס','גשר','תפוז','לימון','בננה','ענב','תות','מנגו','אבוקדו','כיסא','שולחן','מחברת','עיפרון','אהבה','שמחה','חוף','כדורגל','פיצה','קפה','שוקולד','גלידה','מטוס','רכבת','ספינה','כדורסל','טניס','שחייה','ריקוד'];
 
 function getLockedCommandName(text) {
     if (LOCKABLE_EXACT.has(text)) return text;
@@ -632,6 +635,30 @@ async function handleFunCommand(sock, msg, jid, text, pushName, groupParticipant
                 }
                 if (text.trim() === 'עצור') { activeGames.delete(jid); await sock.sendMessage(jid, { text: '🛑 המשחק הופסק.' }); return true; }
             }
+            if (game.type === 'hangman') {
+                const letter = text.trim();
+                if (letter.length === 1 && /[א-ת]/.test(letter)) {
+                    if (game.guessed.has(letter)) {
+                        await sock.sendMessage(jid, { text: `⚠️ כבר ניחשת את האות "${letter}"` }, { quoted: msg }); return true;
+                    }
+                    game.guessed.add(letter);
+                    const correct = game.word.includes(letter);
+                    if (!correct) game.lives--;
+                    const faces = ['😊','😐','🙁','😕','😟','😰','😵'];
+                    const display = [...game.word].map(l => game.guessed.has(l) ? l : '_').join(' ');
+                    const guessedList = [...game.guessed].join(', ');
+                    if (!display.includes('_')) {
+                        activeGames.delete(jid);
+                        await sock.sendMessage(jid, { text: `🎉 *ניצחת!* המילה הייתה: *${game.word}*\n\n${display}\n\n✅ כל הכבוד!` }, { quoted: msg }); return true;
+                    }
+                    if (game.lives <= 0) {
+                        activeGames.delete(jid);
+                        await sock.sendMessage(jid, { text: `💀 *הפסדת!* המילה הייתה: *${game.word}*\nנסה שוב! 😅` }, { quoted: msg }); return true;
+                    }
+                    await sock.sendMessage(jid, { text: `${correct ? '✅' : '❌'} "${letter}" ${correct ? 'נמצאת!' : 'לא נמצאת'}\n\n${display}\n\n${faces[game.lives]} חיים: ${'❤️'.repeat(game.lives)}\n📝 ניחשת: ${guessedList}` }, { quoted: msg }); return true;
+                }
+                if (text.trim() === 'עצור') { activeGames.delete(jid); await sock.sendMessage(jid, { text: `🛑 המשחק הופסק. המילה הייתה: *${game.word}*.` }); return true; }
+            }
         }
 
         // ── בדיקת נעילה ───────────────────────────────────────────
@@ -667,6 +694,7 @@ async function handleFunCommand(sock, msg, jid, text, pushName, groupParticipant
 • \`ראפ [נושא]\` • \`תרגם [טקסט]\`
 • \`מחמאה [שם]\` • \`עלבון [שם]\`
 • \`מי אמר [ציטוט]\` • \`סיכום\`
+• \`ניתוח קבוצה\` • \`ראפ בטל\`
 
 🎲 *כיף*
 • \`בדיחות\` • \`טיפ\` • \`עובדה\`
@@ -679,29 +707,38 @@ async function handleFunCommand(sock, msg, jid, text, pushName, groupParticipant
 • \`מתכון [מנה]\` — מתכון מלא
 • \`תרגיל [שריר]\` — תרגיל כושר
 • \`מילה [מילה]\` — הגדרה + דוגמה
+• \`ספר [שם]\` — חיפוש ספר 📖
 
 ⚡ *כלים*
 • \`פינג\` • \`זמן\` • \`ספידטסט\`
 • \`חשב [תרגיל]\` • \`גימטריה [טקסט]\`
 • \`הגרלה [א, ב, ג]\` • \`בחר [א | ב]\`
 • \`חזור [טקסט]\` 🦜 • \`qr [טקסט]\`
-• \`תמלל\` (כתגובה להקלטה)
-• \`שיר [שם / URL]\` — חיפוש 10 תוצאות + הורדה 🎵
-• \`סרט [שם]\` — חיפוש סרט + קישור Stremio 🎬
+• \`קצר [קישור]\` — קיצור URL 🔗
+• \`תמלל\` — (כתגובה להקלטה)
+• \`שיר [שם / URL]\` — הורדת שיר 🎵
+• \`סרט [שם]\` — חיפוש + צפייה 🎬
+• \`סדרה [שם]\` — בחר עונה ופרק 📺
+• \`הורד [קישור]\` — יוטיוב/אינסטגרם/טיקטוק ⬇️
+• \`mp4 [שם]\` — קליפ לפי שם שיר 🎬
 • \`תמונה [תיאור]\` — יצירת תמונה 🎨
 • \`סטיקר [תיאור]\` — יצירת סטיקר 🖼️
-• \`משחקים\` — ניחוש / איקס עיגול 🎮
+• \`סטיקר\` — (ענה על תמונה)
+• \`פילטר [אפקט]\` — עריכת תמונה ✏️
 • \`פרופיל [@משתמש]\` — פרטי חבר קבוצה
 
+🎮 *משחקים*
+• \`משחקים\` — תפריט משחקים
+• \`ניחוש\` • \`איקס עיגול\` • \`4 בשורה\`
+• \`תליון\` — משחק תלייה 🪢
+
 📊 *קבוצה*
+• \`דירוג\` — מי כותב הכי הרבה 📊
 • \`סקר [שאלה]\` — סקר כן/לא/אולי
 • \`הצבעה [שאלה] | [א] | [ב] | [ג]\`
 • \`אנונימי [הודעה]\` — שלח בסתר
 • \`תזכורת [X שעות/דקות] [הודעה]\`
-• \`רשימה + [פריט]\` — הוסף לרשימה
-• \`רשימה - [מספר]\` — הסר מרשימה
-• \`רשימה?\` — הצג רשימה
-• \`רשימה נקה\` — נקה הכל
+• \`רשימה + [פריט]\` / \`רשימה?\` / \`רשימה נקה\`
 • \`ספירה [נושא]\` / \`++\` / \`ספירה?\`
 
 🛡️ *ניהול (מנהלים בלבד)*
@@ -1064,7 +1101,7 @@ async function handleFunCommand(sock, msg, jid, text, pushName, groupParticipant
         if (text.startsWith('אנונימי ')) {
             const anonMsg = text.slice('אנונימי '.length).trim();
             if (!anonMsg) { await sock.sendMessage(jid, { text: '⚠️ כתוב: אנונימי [הודעה]' }); return true; }
-            await sock.sendMessage(jid, { text: `🎭 *הודעה אנונימית:*\n${anonMsg}` });
+            await sock.sendMessage(jid, { text: anonMsg });
             return true;
         }
 
@@ -1319,17 +1356,37 @@ async function handleFunCommand(sock, msg, jid, text, pushName, groupParticipant
         }
 
         // ── סטיקר ─────────────────────────────────────────────────
-        if (text.startsWith('סטיקר ')) {
-            await sock.sendMessage(jid, { text: '🖼️ פקודת הסטיקרים בתחזוקה כרגע, נחזור בקרוב! 🔧' });
+        if (text === 'סטיקר' || text.startsWith('סטיקר ')) {
+            if (!sharp) { await sock.sendMessage(jid, { text: '❌ ספריית עיבוד תמונות לא זמינה' }); return true; }
+            const quotedImg = msg.message?.extendedTextMessage?.contextInfo?.quotedMessage?.imageMessage;
+            let imgBuf;
+            if (quotedImg) {
+                const { downloadMediaMessage } = require('@whiskeysockets/baileys');
+                const quotedMsg2 = {
+                    key: { remoteJid: jid, id: msg.message.extendedTextMessage.contextInfo.stanzaId, fromMe: false },
+                    message: msg.message.extendedTextMessage.contextInfo.quotedMessage,
+                };
+                await sock.sendMessage(jid, { text: '🖼️ ממיר לסטיקר...' }, { quoted: msg });
+                imgBuf = await downloadMediaMessage(quotedMsg2, 'buffer', {}, { logger: pino({ level: 'silent' }), reuploadRequest: sock.updateMediaMessage });
+            } else if (text.startsWith('סטיקר ')) {
+                const prompt = text.slice('סטיקר '.length).trim();
+                await sock.sendMessage(jid, { text: `🖼️ יוצר סטיקר: *${prompt}*...` }, { quoted: msg });
+                imgBuf = await generateImage(prompt);
+                if (!imgBuf || imgBuf.length < 1000 || imgBuf[0] === 0x3C) throw new Error('שירות יצירת תמונה לא זמין');
+            } else {
+                await sock.sendMessage(jid, { text: '⚠️ ענה על תמונה עם "סטיקר", או כתוב: סטיקר [תיאור]' }); return true;
+            }
+            const webp = await sharp(imgBuf).resize(512, 512, { fit: 'contain', background: { r: 0, g: 0, b: 0, alpha: 0 } }).webp().toBuffer();
+            await sock.sendMessage(jid, { sticker: webp }, { quoted: msg });
             return true;
         }
 
         // ── משחקים ────────────────────────────────────────────────
         if (text === 'משחקים') {
             const cur = activeGames.get(jid);
-            const activeNames = { guess: 'ניחוש מספרים', tictactoe: 'איקס עיגול', connect4: '4 בשורה' };
+            const activeNames = { guess: 'ניחוש מספרים', tictactoe: 'איקס עיגול', connect4: '4 בשורה', hangman: 'תליון' };
             const active = cur ? `\n\n🎮 *משחק פעיל:* ${activeNames[cur.type] || cur.type} (כתוב *עצור* לסיום)` : '';
-            await sock.sendMessage(jid, { text: `🎮 *משחקים זמינים:*\n\n1️⃣ *ניחוש* — ניחוש מספרים 1-100\n2️⃣ *איקס עיגול* — נגד הבוט\n3️⃣ *4 בשורה* — נגד הבוט${active}` });
+            await sock.sendMessage(jid, { text: `🎮 *משחקים זמינים:*\n\n1️⃣ *ניחוש* — ניחוש מספרים 1-100\n2️⃣ *איקס עיגול* — נגד הבוט\n3️⃣ *4 בשורה* — נגד הבוט\n4️⃣ *תליון* — נחש מילה בעברית 🪢${active}` });
             return true;
         }
 
@@ -1354,6 +1411,134 @@ async function handleFunCommand(sock, msg, jid, text, pushName, groupParticipant
             const board = c4New();
             activeGames.set(jid, { type: 'connect4', board, playerJid: senderJid });
             await sock.sendMessage(jid, { text: `🔴🟡 *4 בשורה!*\nאתה 🔴, הבוט 🟡\n\n${c4Text(board)}\n\nשלח מספר עמודה 1-7 (כתוב *עצור* לסיום)` });
+            return true;
+        }
+
+        if (text === 'תליון') {
+            if (activeGames.has(jid)) { await sock.sendMessage(jid, { text: '⚠️ יש כבר משחק פעיל. כתוב *עצור* קודם.' }); return true; }
+            const word = HANGMAN_WORDS[Math.floor(Math.random() * HANGMAN_WORDS.length)];
+            activeGames.set(jid, { type: 'hangman', word, guessed: new Set(), lives: 6, playerJid: senderJid });
+            const display = [...word].map(() => '_').join(' ');
+            await sock.sendMessage(jid, { text: `🪢 *תליון!*\nמצא את המילה (${word.length} אותיות)\n\n${display}\n\n❤️❤️❤️❤️❤️❤️ חיים: 6\nשלח אות בעברית לניחוש (כתוב *עצור* לסיום)` });
+            return true;
+        }
+
+        // ── דירוג ─────────────────────────────────────────────────
+        if (text === 'דירוג') {
+            const hist = groupHistory.get(jid) || [];
+            if (!hist.length) { await sock.sendMessage(jid, { text: '📊 אין עדיין הודעות לדירוג' }); return true; }
+            const counts = {};
+            for (const m of hist) { if (!m.sender) continue; counts[m.sender] = (counts[m.sender] || 0) + 1; }
+            const sorted = Object.entries(counts).sort((a, b) => b[1] - a[1]).slice(0, 10);
+            const medals = ['🥇','🥈','🥉','4️⃣','5️⃣','6️⃣','7️⃣','8️⃣','9️⃣','🔟'];
+            const lines = sorted.map(([name, n], i) => `${medals[i]} *${name}* — ${n} הודעות`).join('\n');
+            await sock.sendMessage(jid, { text: `📊 *דירוג פעילות הקבוצה:*\n(מתוך ${hist.length} הודעות אחרונות)\n\n${lines}` });
+            return true;
+        }
+
+        // ── קצר ───────────────────────────────────────────────────
+        if (text.startsWith('קצר ')) {
+            const url = text.slice('קצר '.length).trim();
+            if (!url.startsWith('http')) { await sock.sendMessage(jid, { text: '⚠️ כתוב: קצר [קישור]\nדוגמה: קצר https://example.com' }); return true; }
+            try {
+                const res = await downloadBuffer(`https://is.gd/create.php?format=simple&url=${encodeURIComponent(url)}`, 8000);
+                const short = res.toString().trim();
+                if (!short.startsWith('http')) throw new Error('תגובה לא תקינה');
+                await sock.sendMessage(jid, { text: `🔗 *קישור מקוצר:*\n${short}` }, { quoted: msg });
+            } catch (e) {
+                await sock.sendMessage(jid, { text: `❌ לא ניתן לקצר: ${e.message?.slice(0, 60)}` });
+            }
+            return true;
+        }
+
+        // ── ספר ───────────────────────────────────────────────────
+        if (text.startsWith('ספר ')) {
+            const bookQuery = text.slice('ספר '.length).trim();
+            await sock.sendMessage(jid, { text: `📚 מחפש: *${bookQuery}*...` }, { quoted: msg });
+            try {
+                const res = await downloadBuffer(`https://openlibrary.org/search.json?title=${encodeURIComponent(bookQuery)}&limit=5&fields=title,author_name,first_publish_year`, 12000);
+                const docs = JSON.parse(res.toString()).docs || [];
+                if (!docs.length) { await sock.sendMessage(jid, { text: '❌ לא נמצא ספר כזה' }); return true; }
+                const lines = docs.slice(0, 5).map((b, i) => {
+                    const author = b.author_name?.[0] || 'לא ידוע';
+                    const year = b.first_publish_year ? ` (${b.first_publish_year})` : '';
+                    return `${i + 1}. *${b.title}* — ${author}${year}`;
+                });
+                await sock.sendMessage(jid, { text: `📚 *תוצאות עבור "${bookQuery}":*\n\n${lines.join('\n')}\n\n🔗 https://openlibrary.org/search?title=${encodeURIComponent(bookQuery)}` });
+            } catch (e) {
+                await sock.sendMessage(jid, { text: `❌ שגיאה בחיפוש ספר: ${e.message?.slice(0, 60)}` });
+            }
+            return true;
+        }
+
+        // ── פילטר ─────────────────────────────────────────────────
+        if (text === 'פילטר' || text.startsWith('פילטר ')) {
+            const quotedImg2 = msg.message?.extendedTextMessage?.contextInfo?.quotedMessage?.imageMessage;
+            if (!quotedImg2) {
+                await sock.sendMessage(jid, { text: '⚠️ ענה על תמונה עם:\n*פילטר שחלב* — שחור לבן\n*פילטר טשטוש* — blur\n*פילטר חד* — sharpen\n*פילטר הפוך* — flip\n*פילטר סיבוב* — rotate 90°\n*פילטר ניגודיות* — invert' });
+                return true;
+            }
+            if (!sharp) { await sock.sendMessage(jid, { text: '❌ עריכת תמונות לא זמינה' }); return true; }
+            const effect = text.slice('פילטר'.length).trim();
+            const { downloadMediaMessage } = require('@whiskeysockets/baileys');
+            const quotedMsg3 = {
+                key: { remoteJid: jid, id: msg.message.extendedTextMessage.contextInfo.stanzaId, fromMe: false },
+                message: msg.message.extendedTextMessage.contextInfo.quotedMessage,
+            };
+            await sock.sendMessage(jid, { text: '🖼️ מעבד תמונה...' }, { quoted: msg });
+            const imgBuf2 = await downloadMediaMessage(quotedMsg3, 'buffer', {}, { logger: pino({ level: 'silent' }), reuploadRequest: sock.updateMediaMessage });
+            let processed;
+            const s = sharp(imgBuf2);
+            if (effect === 'שחלב') processed = await s.grayscale().jpeg().toBuffer();
+            else if (effect === 'טשטוש') processed = await s.blur(6).jpeg().toBuffer();
+            else if (effect === 'חד') processed = await s.sharpen({ sigma: 2 }).jpeg().toBuffer();
+            else if (effect === 'הפוך') processed = await s.flip().jpeg().toBuffer();
+            else if (effect === 'סיבוב') processed = await s.rotate(90).jpeg().toBuffer();
+            else processed = await s.negate().jpeg().toBuffer();
+            const effectName = effect || 'ניגודיות';
+            await sock.sendMessage(jid, { image: processed, caption: `🖼️ פילטר: ${effectName}` }, { quoted: msg });
+            return true;
+        }
+
+        // ── הורד ──────────────────────────────────────────────────
+        if (text.startsWith('הורד ')) {
+            if (!isPrivate && !isPremiumEnabled(jid, 'הורד')) { await sock.sendMessage(jid, { text: '🔒 פקודת *הורד* אינה זמינה בקבוצה זו.' }); return true; }
+            const dlUrl = text.slice('הורד '.length).trim();
+            if (!dlUrl.startsWith('http')) { await sock.sendMessage(jid, { text: '⚠️ כתוב: הורד [קישור יוטיוב/אינסטגרם/טיקטוק]' }); return true; }
+            await sock.sendMessage(jid, { text: '⬇️ מוריד...' }, { quoted: msg });
+            try {
+                const info = await youtubedl(dlUrl, {
+                    ...YTDL_COMMON,
+                    dumpSingleJson: true,
+                    format: 'bestvideo[height<=480][ext=mp4]+bestaudio[ext=m4a]/best[height<=480]/best',
+                    noPlaylist: true,
+                });
+                if (!info?.url) throw new Error('לא ניתן לקבל קישור');
+                if ((info.duration || 0) > 180) throw new Error('הסרטון ארוך מדי (מקסימום 3 דקות)');
+                const vidBuf = await downloadBuffer(info.url, 90000);
+                if (vidBuf.length > 50 * 1024 * 1024) throw new Error('הסרטון גדול מדי (מעל 50MB)');
+                await sock.sendMessage(jid, { video: vidBuf, caption: `🎬 ${info.title || ''}` }, { quoted: msg });
+            } catch (e) {
+                await sock.sendMessage(jid, { text: `❌ לא ניתן להוריד: ${e.message?.slice(0, 100)}` });
+            }
+            return true;
+        }
+
+        // ── mp4 ───────────────────────────────────────────────────
+        if (text.startsWith('mp4 ')) {
+            if (!isPrivate && !isPremiumEnabled(jid, 'mp4')) { await sock.sendMessage(jid, { text: '🔒 פקודת *mp4* אינה זמינה בקבוצה זו.' }); return true; }
+            const mp4Query = text.slice('mp4 '.length).trim();
+            await sock.sendMessage(jid, { text: `🎬 מחפש: *${mp4Query}*...` }, { quoted: msg });
+            try {
+                const mp4Results = await searchTracks(mp4Query);
+                const ytResult = mp4Results.find(r => r.source === 'yt') || mp4Results[0];
+                if (!ytResult) { await sock.sendMessage(jid, { text: '❌ לא נמצאו תוצאות' }); return true; }
+                await sock.sendMessage(jid, { text: `⬇️ מוריד: *${ytResult.title}*` }, { quoted: msg });
+                const { buffer: mp4Buf, title: mp4Title } = await downloadAsMp4(ytResult.url, ytResult.title);
+                await sock.sendMessage(jid, { video: mp4Buf, caption: `🎬 *${mp4Title}*` }, { quoted: msg });
+            } catch (e) {
+                await sock.sendMessage(jid, { text: `❌ שגיאה: ${e.message?.slice(0, 80)}` });
+            }
             return true;
         }
 
