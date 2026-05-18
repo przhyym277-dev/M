@@ -1566,12 +1566,11 @@ async function handleFunCommand(sock, msg, jid, text, pushName, groupParticipant
             // התחל משחק
             if (text === 'רוצח' || text === 'רוצח התחל') {
                 if (text === 'רוצח התחל' && existingGame?.phase === 'joining') {
-                    // הבעלים רוצה להתחיל מוקדם
                     if (existingGame.players.length < 3) {
                         await sock.sendMessage(jid, { text: `⚠️ צריך לפחות 3 שחקנים. יש כרגע ${existingGame.players.length}.` }); return true;
                     }
                     if (existingGame.phaseTimer) clearTimeout(existingGame.phaseTimer);
-                    await startMurderNight(sock, jid, existingGame);
+                    await murderGame.startNight(sock, jid);
                     return true;
                 }
                 if (existingGame) { await sock.sendMessage(jid, { text: `⚠️ משחק כבר פעיל! כתוב *רוצח עצור* לסיום.` }); return true; }
@@ -1580,7 +1579,7 @@ async function handleFunCommand(sock, msg, jid, text, pushName, groupParticipant
                     groupJid: jid, phase: 'joining',
                     players: [{ jid: normSender, name: pushName || normSender.split('@')[0], alive: true, role: null }],
                     murdererJid: null, victimJid: null,
-                    votes: new Map(), initiatorJid: normSender, sock,
+                    votes: new Map(), initiatorJid: normSender,
                     phaseTimer: null,
                 };
                 murderGame.games.set(jid, game);
@@ -1593,111 +1592,10 @@ async function handleFunCommand(sock, msg, jid, text, pushName, groupParticipant
                         await sock.sendMessage(jid, { text: '⌛ הזמן עבר אבל יש פחות מ-3 שחקנים. משחק בוטל.' });
                         murderGame.endGame(jid); return;
                     }
-                    await startMurderNight(sock, jid, g);
+                    await murderGame.startNight(sock, jid);
                 }, 90 * 1000);
                 return true;
             }
-        }
-
-        async function startMurderNight(sock, groupJid, game) {
-            game.phase = 'night';
-            // בחר רוצח אקראי
-            const idx = Math.floor(Math.random() * game.players.length);
-            game.murdererJid = game.players[idx].jid;
-            game.players.forEach(p => p.role = p.jid === game.murdererJid ? 'murderer' : 'citizen');
-
-            // שלח תפקידים בפרטי
-            for (const p of game.players) {
-                try {
-                    const dmJid = p.jid.includes('@lid') ? p.jid : p.jid;
-                    if (p.role === 'murderer') {
-                        await sock.sendMessage(dmJid, { text: `🔪 *אתה הרוצח!*\n\nהשחקנים:\n${game.players.map((pl,i) => `${i+1}. ${pl.name}`).join('\n')}\n\nשלח לי בפרטי:\n*הרג [שם]*\n\nיש לך 2 דקות!` });
-                    } else {
-                        await sock.sendMessage(dmJid, { text: `👮 *אתה אזרח!*\n\nמצא את הרוצח בקרב:\n${game.players.map(pl => `• ${pl.name}`).join('\n')}\n\nחקור וצבע נגד החשוד בקבוצה עם *הצבע [שם]*` });
-                    }
-                } catch (e) {
-                    console.error(`murder DM failed for ${p.jid}:`, e.message?.slice(0, 60));
-                }
-            }
-
-            const names = game.players.map(p => `• ${p.name}`).join('\n');
-            await sock.sendMessage(groupJid, { text: `🌙 *הלילה ירד על הכפר...*\n\nהשחקנים:\n${names}\n\n😴 כולם ישנים. הרוצח מתכנן...\n_(כל שחקן קיבל את תפקידו בפרטי)_` });
-
-            game.phaseTimer = setTimeout(async () => {
-                const g = murderGame.getByGroup(groupJid);
-                if (!g || g.phase !== 'night') return;
-                // אם הרוצח לא בחר — בחר קורבן אקראי
-                if (!g.victimJid) {
-                    const alive = g.players.filter(p => p.alive && p.jid !== g.murdererJid);
-                    if (!alive.length) { murderGame.endGame(groupJid); return; }
-                    g.victimJid = alive[Math.floor(Math.random() * alive.length)].jid;
-                }
-                await announceMurder(sock, groupJid, g);
-            }, 2 * 60 * 1000);
-        }
-
-        async function announceMurder(sock, groupJid, game) {
-            game.phase = 'day';
-            const victim = game.players.find(p => p.jid === game.victimJid);
-            if (!victim) { murderGame.endGame(groupJid); return; }
-            victim.alive = false;
-
-            await sock.sendMessage(groupJid, { text: `🌅 *בוקר בכפר*\n\n💀 *${victim.name} נמצא מת!*\n\nיש לכם 90 שניות לדון ולהחליט מי הרוצח.\nאחכ תתחיל הצבעה!` });
-
-            // בדוק אם רק 2 נשארו חיים — רוצח ניצח
-            const aliveCount = game.players.filter(p => p.alive).length;
-            if (aliveCount <= 2) {
-                const murdererPlayer = game.players.find(p => p.jid === game.murdererJid);
-                await sock.sendMessage(groupJid, { text: `😈 *הרוצח ניצח!*\n\nהרוצח היה: *${murdererPlayer?.name}*\n\nנשארו רק ${aliveCount} שחקנים חיים — הכפר לא שרד.` });
-                murderGame.endGame(groupJid); return;
-            }
-
-            game.phaseTimer = setTimeout(async () => {
-                const g = murderGame.getByGroup(groupJid);
-                if (!g || g.phase !== 'day') return;
-                await startVote(sock, groupJid, g);
-            }, 90 * 1000);
-        }
-
-        async function startVote(sock, groupJid, game) {
-            game.phase = 'vote';
-            game.votes.clear();
-            const alivePlayers = game.players.filter(p => p.alive);
-            const list = alivePlayers.map((p, i) => `${i + 1}. ${p.name}`).join('\n');
-            await sock.sendMessage(groupJid, { text: `🗳️ *זמן הצבעה!*\n\nמי הרוצח לדעתכם?\n${list}\n\nכתבו: *הצבע [שם]*\nיש לכם 60 שניות!` });
-
-            game.phaseTimer = setTimeout(async () => {
-                const g = murderGame.getByGroup(groupJid);
-                if (!g || g.phase !== 'vote') return;
-                await tallyVotes(sock, groupJid, g);
-            }, 60 * 1000);
-        }
-
-        async function tallyVotes(sock, groupJid, game) {
-            // ספור קולות
-            const tally = {};
-            for (const suspect of game.votes.values()) {
-                const key = suspect.trim().toLowerCase();
-                tally[key] = (tally[key] || 0) + 1;
-            }
-            const sorted = Object.entries(tally).sort((a, b) => b[1] - a[1]);
-            const murdererPlayer = game.players.find(p => p.jid === game.murdererJid);
-            const murdererName = murdererPlayer?.name?.toLowerCase() || '';
-
-            let resultText = `📊 *תוצאות ההצבעה:*\n`;
-            for (const [name, count] of sorted) {
-                resultText += `• ${name}: ${count} קולות\n`;
-            }
-
-            const topVote = sorted[0]?.[0] || '';
-            if (topVote && (topVote.includes(murdererName) || murdererName.includes(topVote))) {
-                resultText += `\n🎉 *האזרחים ניצחו!*\nהרוצח היה: *${murdererPlayer?.name}*\n\nמזל טוב לכולם! 🏆`;
-            } else {
-                resultText += `\n😈 *הרוצח ניצח!*\nהרוצח האמיתי היה: *${murdererPlayer?.name}*\n\nהכפר טעה... 💀`;
-            }
-
-            await sock.sendMessage(groupJid, { text: resultText });
-            murderGame.endGame(groupJid);
         }
 
         // ── סיכום ─────────────────────────────────────────────────

@@ -265,52 +265,7 @@ async function handlePrivateMessage(sock, msg) {
             game.victimJid = target.jid;
             if (game.phaseTimer) clearTimeout(game.phaseTimer);
             await sock.sendMessage(jid, { text: `✅ בחרת ב-*${target.name}*. ממתין לבוקר...` });
-            // announce murder in group
-            const { announceMurder } = require('./group-commands');
-            // trigger night end in group
-            setTimeout(async () => {
-                try {
-                    const g = murderGame.getByGroup(game.groupJid);
-                    if (g && g.phase === 'night') {
-                        // call announce via sock
-                        g.phase = 'announcing'; // prevent double trigger
-                        const victim = g.players.find(p => p.jid === g.victimJid);
-                        if (!victim) return;
-                        victim.alive = false;
-                        g.phase = 'day';
-                        await sock.sendMessage(g.groupJid, { text: `🌅 *בוקר בכפר*\n\n💀 *${victim.name} נמצא מת!*\n\nיש לכם 90 שניות לדון ולהחליט מי הרוצח.\nאחכ תתחיל הצבעה!` });
-                        const aliveCount = g.players.filter(p => p.alive).length;
-                        if (aliveCount <= 2) {
-                            const murdererPlayer = g.players.find(p => p.jid === g.murdererJid);
-                            await sock.sendMessage(g.groupJid, { text: `😈 *הרוצח ניצח!*\n\nהרוצח היה: *${murdererPlayer?.name}*` });
-                            murderGame.endGame(g.groupJid); return;
-                        }
-                        g.phaseTimer = setTimeout(async () => {
-                            const gr = murderGame.getByGroup(g.groupJid);
-                            if (!gr || gr.phase !== 'day') return;
-                            gr.phase = 'vote'; gr.votes.clear();
-                            const list = gr.players.filter(p => p.alive).map((p,i) => `${i+1}. ${p.name}`).join('\n');
-                            await sock.sendMessage(g.groupJid, { text: `🗳️ *זמן הצבעה!*\n\n${list}\n\nכתבו: *הצבע [שם]*\n60 שניות!` });
-                            gr.phaseTimer = setTimeout(async () => {
-                                const gv = murderGame.getByGroup(g.groupJid);
-                                if (!gv || gv.phase !== 'vote') return;
-                                const tally = {};
-                                for (const s of gv.votes.values()) tally[s.toLowerCase()] = (tally[s.toLowerCase()]||0)+1;
-                                const sorted = Object.entries(tally).sort((a,b)=>b[1]-a[1]);
-                                const murdP = gv.players.find(p=>p.jid===gv.murdererJid);
-                                const mName = murdP?.name?.toLowerCase()||'';
-                                let res = `📊 *תוצאות:*\n${sorted.map(([n,c])=>`• ${n}: ${c} קולות`).join('\n')}\n\n`;
-                                const top = sorted[0]?.[0]||'';
-                                res += (top && (top.includes(mName)||mName.includes(top)))
-                                    ? `🎉 *האזרחים ניצחו!* הרוצח היה: *${murdP?.name}* 🏆`
-                                    : `😈 *הרוצח ניצח!* הרוצח האמיתי היה: *${murdP?.name}* 💀`;
-                                await sock.sendMessage(g.groupJid, { text: res });
-                                murderGame.endGame(g.groupJid);
-                            }, 60000);
-                        }, 90000);
-                    }
-                } catch(e) { console.error('murder night end error:', e.message); }
-            }, 2000);
+            await murderGame.processNightEnd(sock, game.groupJid);
             return;
         }
     }
