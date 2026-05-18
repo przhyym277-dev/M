@@ -1088,12 +1088,21 @@ async function handleFunCommand(sock, msg, jid, text, pushName, groupParticipant
         if (text.startsWith('הצבעה ')) {
             const parts = text.slice('הצבעה '.length).split('|').map(s => s.trim()).filter(Boolean);
             if (parts.length < 3) {
-                await sock.sendMessage(jid, { text: '⚠️ כתוב: הצבעה [שאלה] | [א] | [ב] | [ג]\nדוגמה: הצבעה מה אוכלים? | פיצה | שווארמה | סושי' });
+                await sock.sendMessage(jid, { text: '⚠️ כתוב: הצבעה [שאלה] | [א] | [ב] | [ג]\nדוגמה: הצבעה מה אוכלים? | פיצה | שווארמה | סושי\n💡 להצבעה מרובה: הוסף | קולות:2 בסוף' });
                 return true;
             }
             const question = parts[0];
-            const options = parts.slice(1).slice(0, 12);
-            await sock.sendMessage(jid, { poll: { name: question, values: options, selectableCount: 1 } });
+            let options = parts.slice(1);
+            let selectableCount = 1;
+            const lastPart = options[options.length - 1];
+            const votesMatch = lastPart.match(/^קולות:(\d+)$/);
+            if (votesMatch) {
+                options = options.slice(0, -1);
+                selectableCount = Math.min(Math.max(1, parseInt(votesMatch[1], 10)), options.length);
+            }
+            options = options.slice(0, 12);
+            if (options.length < 2) { await sock.sendMessage(jid, { text: '⚠️ צריך לפחות 2 אפשרויות' }); return true; }
+            await sock.sendMessage(jid, { poll: { name: question, values: options, selectableCount } });
             return true;
         }
 
