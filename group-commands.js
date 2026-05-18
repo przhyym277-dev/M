@@ -410,6 +410,7 @@ function getCountryInfo(phone) {
 }
 
 const LOCKABLE_PREFIXES = [
+    ['ראפ בטל ','ראפ בטל'],
     ['ראפ ','ראפ'],['תרגם ','תרגם'],['מחמאה ','מחמאה'],['עלבון ','עלבון'],
     ['מתכון ','מתכון'],['תרגיל ','תרגיל'],['מילה ','מילה'],['שיר ','שיר'],
     ['סרט ','סרט'],
@@ -420,7 +421,7 @@ const LOCKABLE_PREFIXES = [
     ['qr ','qr'],['QR ','qr'],['פרופיל ','פרופיל'],
     ['תמונה ','תמונה'],['סטיקר ','סטיקר'],
 ];
-const LOCKABLE_EXACT = new Set(['בדיחות','טיפ','עובדה','ציטוט','טריוויה','חידה','נכון או אמת','שידוך','רולטה','סיכום','תמלל','פרופיל','משחקים','ניחוש','איקס עיגול']);
+const LOCKABLE_EXACT = new Set(['בדיחות','טיפ','עובדה','ציטוט','טריוויה','חידה','נכון או אמת','שידוך','רולטה','סיכום','תמלל','פרופיל','משחקים','ניחוש','איקס עיגול','4 בשורה','ניתוח קבוצה','ראפ בטל']);
 
 function getLockedCommandName(text) {
     if (LOCKABLE_EXACT.has(text)) return text;
@@ -1209,6 +1210,55 @@ async function handleFunCommand(sock, msg, jid, text, pushName, groupParticipant
                 console.error('movie search error:', e.message);
                 await sock.sendMessage(jid, { text: `❌ שגיאה בחיפוש סרט: ${e.message?.slice(0, 60)}` });
             }
+            return true;
+        }
+
+        // ── ניתוח קבוצה ───────────────────────────────────────────
+        if (text === 'ניתוח קבוצה') {
+            if (!isPrivate && !isPremiumEnabled(jid, 'ניתוח קבוצה')) { await sock.sendMessage(jid, { text: '🔒 פקודת *ניתוח קבוצה* אינה זמינה בקבוצה זו.' }); return true; }
+            if (!isPrivate && isCommandLocked(jid, 'ניתוח קבוצה')) { await sock.sendMessage(jid, { text: '🔒 פקודה זו נעולה.' }); return true; }
+            const history = groupHistory.get(jid) || [];
+            if (history.length < 5) { await sock.sendMessage(jid, { text: '❌ אין מספיק הודעות לניתוח (צריך לפחות 5)' }); return true; }
+            await sock.sendMessage(jid, { text: '🔍 מנתח את הקבוצה...' }, { quoted: msg });
+            const recent = history.slice(-50);
+            const chatText = recent.map(m => `${m.sender}: ${m.text}`).join('\n');
+            const analysis = await askGroq(
+                'אתה מנתח קבוצות ווטסאפ בצורה מצחיקה ועוקצנית. נתח את השיחה: חלק אחוזים לנושאים (ויכוחים/בדיחות/רכילות וכו׳), תאר את האישיות של כל משתתף בשורה קצרה, והוסף הכרזה מצחיקה על הקבוצה. ענה בעברית עם אמוג׳י.',
+                `שיחת הקבוצה:\n${chatText}`,
+                700
+            );
+            await sock.sendMessage(jid, { text: `📊 *ניתוח הקבוצה:*\n\n${analysis || 'לא הצלחתי לנתח 😅'}` });
+            return true;
+        }
+
+        // ── ראפ בטל ────────────────────────────────────────────────
+        if (text === 'ראפ בטל' || text.startsWith('ראפ בטל ')) {
+            if (!isPrivate && !isPremiumEnabled(jid, 'ראפ בטל')) { await sock.sendMessage(jid, { text: '🔒 פקודת *ראפ בטל* אינה זמינה בקבוצה זו.' }); return true; }
+            if (!isPrivate && isCommandLocked(jid, 'ראפ בטל')) { await sock.sendMessage(jid, { text: '🔒 פקודה זו נעולה.' }); return true; }
+            const history = groupHistory.get(jid) || [];
+            let person1, person2, msgs1, msgs2;
+            const vsMatch = text.match(/ראפ בטל (.+?)\s+(?:vs|נגד)\s+(.+)/i);
+            if (vsMatch) {
+                person1 = vsMatch[1].trim();
+                person2 = vsMatch[2].trim();
+                msgs1 = history.filter(m => m.sender.includes(person1)).slice(-10).map(m => m.text).join(' | ') || 'כלום';
+                msgs2 = history.filter(m => m.sender.includes(person2)).slice(-10).map(m => m.text).join(' | ') || 'כלום';
+            } else {
+                const senders = [...new Set(history.slice(-60).map(m => m.sender))];
+                if (senders.length < 2) { await sock.sendMessage(jid, { text: '❌ צריך לפחות 2 אנשים בשיחה. כתוב: *ראפ בטל שם1 vs שם2*' }); return true; }
+                person1 = senders[Math.floor(Math.random() * senders.length)];
+                const others = senders.filter(s => s !== person1);
+                person2 = others[Math.floor(Math.random() * others.length)];
+                msgs1 = history.filter(m => m.sender === person1).slice(-8).map(m => m.text).join(' | ') || 'כלום';
+                msgs2 = history.filter(m => m.sender === person2).slice(-8).map(m => m.text).join(' | ') || 'כלום';
+            }
+            await sock.sendMessage(jid, { text: `🎤 *ראפ בטל: ${person1} 🆚 ${person2}*\n🔥 מכין...` }, { quoted: msg });
+            const rap = await askGroq(
+                'אתה כותב ראפ בטלים בעברית. כתוב ראפ בטל מצחיק ועוקצני. כל צד מדבר 4-5 שורות עם חריזה. בסוף הכרז על מנצח בצורה דרמטית. ענה בעברית בלבד.',
+                `ראפ בטל בין ${person1} ל-${person2}.\n${person1} כתב לאחרונה: "${msgs1}"\n${person2} כתב לאחרונה: "${msgs2}"\n\nכתוב ראפ בטל!`,
+                800
+            );
+            await sock.sendMessage(jid, { text: `🎤 *${person1} 🆚 ${person2}*\n\n${rap || 'לא הצלחתי לכתוב ראפ 😅'}` });
             return true;
         }
 
