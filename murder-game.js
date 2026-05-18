@@ -80,8 +80,8 @@ async function morning(sock, groupJid) {
 
     await sock.sendMessage(groupJid, { text: `🌅 *בוקר בכפר*\n\n💀 *${victim.name} נמצא מת הלילה!*` });
 
-    if (aliveCount <= 2) {
-        await sock.sendMessage(groupJid, { text: `😈 *הרוצח ניצח!*\nנשארו רק ${aliveCount} — הכפר לא שרד.\nהרוצח היה: *${murderer?.name}*` });
+    if (aliveCount <= 1) {
+        await sock.sendMessage(groupJid, { text: `😈 *הרוצח ניצח!*\nנשאר רק ${aliveCount} — הכפר לא שרד.\nהרוצח היה: *${murderer?.name}*` });
         endGame(groupJid); return;
     }
 
