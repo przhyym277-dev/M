@@ -664,7 +664,7 @@ async function handleFunCommand(sock, msg, jid, text, pushName, groupParticipant
 
         // ── בדיקת נעילה ───────────────────────────────────────────
         const lockedName = getLockedCommandName(text);
-        if (lockedName && isCommandLocked(jid, lockedName)) {
+        if (!isPrivate && lockedName && isCommandLocked(jid, lockedName)) {
             await sock.sendMessage(jid, { text: '🔒 פקודה זו נעולה על ידי מנהל הקבוצה.' });
             return true;
         }
@@ -1379,6 +1379,7 @@ async function handleFunCommand(sock, msg, jid, text, pushName, groupParticipant
                 await sock.sendMessage(jid, { text: '🖼️ ממיר לסטיקר...' }, { quoted: msg });
                 imgBuf = await downloadMediaMessage(quotedMsg2, 'buffer', {}, { logger: pino({ level: 'silent' }), reuploadRequest: sock.updateMediaMessage });
             } else if (text.startsWith('סטיקר ')) {
+                if (!isPrivate && !isPremiumEnabled(jid, 'תמונה')) { await sock.sendMessage(jid, { text: '🔒 יצירת תמונות אינה זמינה בקבוצה זו.' }); return true; }
                 const prompt = text.slice('סטיקר '.length).trim();
                 await sock.sendMessage(jid, { text: `🖼️ יוצר סטיקר: *${prompt}*...` }, { quoted: msg });
                 imgBuf = await generateImage(prompt);
@@ -1483,6 +1484,7 @@ async function handleFunCommand(sock, msg, jid, text, pushName, groupParticipant
 
         // ── פילטר ─────────────────────────────────────────────────
         if (text === 'פילטר' || text.startsWith('פילטר ')) {
+            if (!isPrivate && !isPremiumEnabled(jid, 'תמונה')) { await sock.sendMessage(jid, { text: '🔒 עיבוד תמונות אינו זמין בקבוצה זו.' }); return true; }
             const quotedImg2 = msg.message?.extendedTextMessage?.contextInfo?.quotedMessage?.imageMessage;
             if (!quotedImg2) {
                 await sock.sendMessage(jid, { text: '⚠️ ענה על תמונה עם:\n*פילטר שחלב* — שחור לבן\n*פילטר טשטוש* — blur\n*פילטר חד* — sharpen\n*פילטר הפוך* — flip\n*פילטר סיבוב* — rotate 90°\n*פילטר ניגודיות* — invert' });
