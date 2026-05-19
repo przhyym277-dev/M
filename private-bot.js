@@ -13,6 +13,7 @@ const SETTINGS_FILE = path.join(DATA_DIR, 'private-settings.json');
 
 let privateMode = 'all'; // 'all' | 'none' | 'whitelist'
 let privateWhitelist = new Set();
+let privateBlockedCommands = new Set(); // פקודות חסומות בפרטי (סרט, שיר, תמונה, סטיקר...)
 
 function loadSettings() {
     try {
@@ -20,14 +21,19 @@ function loadSettings() {
         const data = JSON.parse(fs.readFileSync(SETTINGS_FILE, 'utf8'));
         privateMode = data.mode || 'all';
         privateWhitelist = new Set(data.whitelist || []);
-        console.log(`✅ Private settings loaded (mode=${privateMode} whitelist=${privateWhitelist.size})`);
+        privateBlockedCommands = new Set(data.blockedCommands || []);
+        console.log(`✅ Private settings loaded (mode=${privateMode} whitelist=${privateWhitelist.size} blocked=${privateBlockedCommands.size})`);
     } catch (e) { console.error('private settings load error:', e.message); }
 }
 
 function saveSettings() {
     try {
         if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
-        fs.writeFileSync(SETTINGS_FILE, JSON.stringify({ mode: privateMode, whitelist: [...privateWhitelist] }, null, 2));
+        fs.writeFileSync(SETTINGS_FILE, JSON.stringify({
+            mode: privateMode,
+            whitelist: [...privateWhitelist],
+            blockedCommands: [...privateBlockedCommands],
+        }, null, 2));
     } catch {}
 }
 
@@ -124,15 +130,34 @@ async function handlePrivateMessage(sock, msg) {
             const list = privateWhitelist.size > 0
                 ? '\n\n' + [...privateWhitelist].map(j => `• +${j.split('@')[0]}`).join('\n')
                 : '\n\n_(הרשימה ריקה)_';
-            await sock.sendMessage(jid, { text: `📱 *הגדרות פרטי:*\nמצב: ${modeText}${privateMode === 'whitelist' ? list : ''}` }); return;
+            const blocked = privateBlockedCommands.size > 0
+                ? `\n\n🔒 *פקודות חסומות בפרטי:* ${[...privateBlockedCommands].join(', ')}`
+                : '';
+            await sock.sendMessage(jid, { text: `📱 *הגדרות פרטי:*\nמצב: ${modeText}${privateMode === 'whitelist' ? list : ''}${blocked}\n\nלחסום פקודה: *פרטי חסום [שם]*\nלפתוח פקודה: *פרטי פתח [שם]*` }); return;
         }
         if (text.startsWith('פרטי הוסף ')) {
             const phone = normalizePhone(text.slice('פרטי הוסף '.length));
-            const targetJid = `${phone}@s.whatsapp.net`;
+            let targetJid = `${phone}@s.whatsapp.net`;
+            try {
+                const [result] = await sock.onWhatsApp(phone) || [];
+                if (result?.exists && result.jid) targetJid = normJid(result.jid);
+            } catch {}
             privateWhitelist.add(targetJid);
             if (privateMode !== 'whitelist') { privateMode = 'whitelist'; }
             saveSettings();
-            await sock.sendMessage(jid, { text: `✅ +${phone} נוסף לרשימה המורשים.\nמצב: רשימה לבנה (${privateWhitelist.size} אנשים)` }); return;
+            await sock.sendMessage(jid, { text: `✅ +${phone} נוסף לרשימה המורשים.\nJID: ${targetJid}\nמצב: רשימה לבנה (${privateWhitelist.size} אנשים)` }); return;
+        }
+        if (text.startsWith('פרטי חסום ')) {
+            const cmd = text.slice('פרטי חסום '.length).trim();
+            privateBlockedCommands.add(cmd);
+            saveSettings();
+            await sock.sendMessage(jid, { text: `🔒 פקודת *${cmd}* חסומה בפרטי.\nלפתיחה: *פרטי פתח ${cmd}*` }); return;
+        }
+        if (text.startsWith('פרטי פתח ')) {
+            const cmd = text.slice('פרטי פתח '.length).trim();
+            privateBlockedCommands.delete(cmd);
+            saveSettings();
+            await sock.sendMessage(jid, { text: `🔓 פקודת *${cmd}* פתוחה בפרטי.` }); return;
         }
         if (text.toLowerCase().includes('בדיקת הורדה')) {
             await sock.sendMessage(jid, { text: '🔍 בודק...' });
@@ -288,8 +313,13 @@ async function handlePrivateMessage(sock, msg) {
     // ── בדיקת הרשאה ──────────────────────────────────────────────
     if (!canRespond(jid)) return;
 
+    // ── בדיקת חסימת פקודות בפרטי ────────────────────────────────
+    const cmdWord = text.split(' ')[0];
+    if (privateBlockedCommands.has(cmdWord)) {
+        await sock.sendMessage(jid, { text: `🔒 פקודת *${cmdWord}* אינה זמינה בפרטי.` }); return;
+    }
+
     // ── פקודות קבוצה (ללא בדיקת פרימיום) ───────────────────────
-    // Override isPremiumEnabled for private chats — always allow
     const handled = await handleFunCommand(sock, msg, jid, text, msg.pushName || '', [], jid, true);
     if (handled) return;
 
