@@ -8,7 +8,14 @@ const GLOBAL_SUPER_ADMINS = new Set(['972522091733', '972508181322', '9866871995
 const BOT_OWNERS = { '972522091733': 'יאיר פרץ', '972508181322': 'יאיר פריש' };
 const GROQ_KEYS = [process.env.GROQ_API_KEY, process.env.GROQ_API_KEY_2, process.env.GROQ_API_KEY_3].filter(Boolean);
 let groqKeyIdx = 0;
-async function askGroqReply(question) {
+const groupAiHistory = new Map(); // jid → [{role, content}]
+
+async function askGroqReply(question, groupJid) {
+    if (!groupAiHistory.has(groupJid)) groupAiHistory.set(groupJid, []);
+    const history = groupAiHistory.get(groupJid);
+    history.push({ role: 'user', content: question });
+    if (history.length > 20) history.splice(0, history.length - 20);
+
     for (let i = 0; i < GROQ_KEYS.length; i++) {
         try {
             const client = new Groq({ apiKey: GROQ_KEYS[groqKeyIdx % GROQ_KEYS.length] });
@@ -16,16 +23,20 @@ async function askGroqReply(question) {
                 model: 'llama-3.3-70b-versatile',
                 messages: [
                     { role: 'system', content: 'אתה בוט ווטסאפ חכם ומצחיק. ענה בעברית, קצר, עם אמוג\'י. אל תזכיר מי הבעלים שלך אלא אם שאלו אותך ישירות.' },
-                    { role: 'user', content: question },
+                    ...history,
                 ],
                 max_tokens: 300, temperature: 0.8,
             });
-            return r.choices[0]?.message?.content?.trim() || null;
+            const reply = r.choices[0]?.message?.content?.trim() || null;
+            if (reply) history.push({ role: 'assistant', content: reply });
+            return reply;
         } catch (err) {
             if ((err.status === 429 || err.message?.includes('429')) && i < GROQ_KEYS.length - 1) { groqKeyIdx++; continue; }
+            history.pop(); // remove user message on failure
             return null;
         }
     }
+    history.pop();
     return null;
 }
 
@@ -90,7 +101,7 @@ async function handleGroupMessage(sock, msg) {
         || (!!ctxInfo?.quotedMessage && !ctxParticipant);
     console.log(`💬 reply-check: fromMe=${ctxInfo?.fromMe} participant="${ctxParticipant}" ctxNum=${ctxNum} botPhone=${botPhoneNum} botLid=${botLidNum} → isReplyToBot=${isReplyToBot}`);
     if (isReplyToBot && text) {
-        const reply = await askGroqReply(text);
+        const reply = await askGroqReply(text, jid);
         if (reply) {
             await sock.sendMessage(jid, { text: reply }, { quoted: msg });
         } else {

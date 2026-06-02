@@ -11,7 +11,7 @@ const path = require('path');
 const os = require('os');
 const youtubedl = require('youtube-dl-exec');
 const playdl = require('play-dl');
-const { isCommandLocked, isPremiumEnabled } = require('./group-admin');
+const { isCommandLocked, isPremiumEnabled, blockMatchmaking, unblockMatchmaking, isMatchmakingBlocked } = require('./group-admin');
 const murderGame = require('./murder-game');
 let sharp; try { sharp = require('sharp'); } catch {}
 
@@ -423,7 +423,7 @@ const LOCKABLE_PREFIXES = [
     ['תמונה ','תמונה'],['סטיקר ','סטיקר'],
     ['קצר ','קצר'],['ספר ','ספר'],['פילטר ','פילטר'],['mp4 ','mp4'],
 ];
-const LOCKABLE_EXACT = new Set(['בדיחות','טיפ','עובדה','ציטוט','טריוויה','חידה','נכון או אמת','שידוך','רולטה','סיכום','תמלל','פרופיל','משחקים','ניחוש','איקס עיגול','4 בשורה','ניתוח קבוצה','ראפ בטל','תליון','דירוג','סטיקר','רוצח']);
+const LOCKABLE_EXACT = new Set(['בדיחות','טיפ','עובדה','ציטוט','טריוויה','חידה','נכון או אמת','שידוך','רולטה','סיכום','תמלל','פרופיל','משחקים','ניחוש','איקס עיגול','4 בשורה','ניתוח קבוצה','ראפ בטל','תליון','דירוג','סטיקר','רוצח','עצור משחקים']);
 
 const HANGMAN_WORDS = ['ספר','בית','כלב','חתול','מחשב','תפוח','ירושלים','ים','הר','עץ','אריה','פיל','פרפר','שיר','חלון','מכונית','אוטובוס','גשר','תפוז','לימון','בננה','ענב','תות','מנגו','אבוקדו','כיסא','שולחן','מחברת','עיפרון','אהבה','שמחה','חוף','כדורגל','פיצה','קפה','שוקולד','גלידה','מטוס','רכבת','ספינה','כדורסל','טניס','שחייה','ריקוד'];
 
@@ -435,7 +435,7 @@ function getLockedCommandName(text) {
     return null;
 }
 
-async function handleFunCommand(sock, msg, jid, text, pushName, groupParticipants, senderJid = '', isPrivate = false) {
+async function handleFunCommand(sock, msg, jid, text, pushName, groupParticipants, senderJid = '', isSenderAdmin = false, isPrivate = false) {
     const t = Date.now();
     try {
 
@@ -556,6 +556,18 @@ async function handleFunCommand(sock, msg, jid, text, pushName, groupParticipant
                     return true;
                 }
             }
+        }
+
+        // ── עצור משחקים (admin) ──────────────────────────────────────
+        if (text === 'עצור משחקים') {
+            if (!isSenderAdmin) {
+                await sock.sendMessage(jid, { text: '⚠️ רק מנהלים יכולים לעצור משחקים' });
+                return true;
+            }
+            activeGames.delete(jid);
+            murderGame.endGame(jid);
+            await sock.sendMessage(jid, { text: '🛑 כל המשחקים הופסקו.' });
+            return true;
         }
 
         // ── active game handler ────────────────────────────────────
@@ -898,9 +910,20 @@ async function handleFunCommand(sock, msg, jid, text, pushName, groupParticipant
         }
 
         // ── שידוך ─────────────────────────────────────────────────
+        if (text === 'חסום שידוך') {
+            blockMatchmaking(jid, senderJid);
+            await sock.sendMessage(jid, { text: `🚫 @${senderJid.split('@')[0]} לא ישודך יותר.\nלביטול: *בטל חסימת שידוך*`, mentions: [senderJid] });
+            return true;
+        }
+        if (text === 'בטל חסימת שידוך') {
+            unblockMatchmaking(jid, senderJid);
+            await sock.sendMessage(jid, { text: `✅ @${senderJid.split('@')[0]} חזר לשידוכים!`, mentions: [senderJid] });
+            return true;
+        }
         if (text === 'שידוך') {
             if (!groupParticipants || groupParticipants.length < 2) { await sock.sendMessage(jid, { text: '⚠️ אין מספיק משתתפים' }); return true; }
-            const pool = [...groupParticipants].sort(() => Math.random() - 0.5);
+            const pool = [...groupParticipants].filter(p => !isMatchmakingBlocked(jid, p)).sort(() => Math.random() - 0.5);
+            if (pool.length < 2) { await sock.sendMessage(jid, { text: '⚠️ אין מספיק משתתפים לא חסומים לשידוך' }); return true; }
             const p1 = pool[0]; const p2 = pool[1];
             const funny = await askGroq('קבוצת ווטסאפ', 'משפט מצחיק אחד על זוג חדש') || '💕';
             await sock.sendMessage(jid, { text: `💍 *שידוך!*\n@${p1.split('@')[0]} + @${p2.split('@')[0]}\n${funny}`, mentions: [p1, p2] });

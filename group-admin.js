@@ -13,6 +13,7 @@ const lockedCommands = new Map();
 const groupWelcomeTemplates = new Map();
 const premiumSettings = new Map(); // gid → { שיר: bool, סרט: bool, תמונה: bool }
 const dailyLimits    = new Map(); // gid → { limit: N, count: N, date: 'YYYY-MM-DD' }
+const matchmakingBlocked = new Map(); // gid → Set<jid>
 
 const PREMIUM_COMMANDS = ['שיר', 'סרט', 'סדרה', 'תמונה', 'ניתוח קבוצה', 'ראפ בטל'];
 
@@ -47,6 +48,10 @@ function loadSettings() {
             for (const [gid, d] of Object.entries(raw.dailyLimits))
                 dailyLimits.set(gid, d);
         }
+        if (raw.matchmakingBlocked) {
+            for (const [gid, jids] of Object.entries(raw.matchmakingBlocked))
+                matchmakingBlocked.set(gid, new Set(jids));
+        }
         console.log(`✅ Group settings loaded (${groupSettings.size} groups)`);
     } catch (e) {
         console.error('Failed to load group settings:', e.message);
@@ -63,6 +68,7 @@ function saveSettings() {
             welcomeTemplates: Object.fromEntries(groupWelcomeTemplates),
             premiumSettings: Object.fromEntries(premiumSettings),
             dailyLimits: Object.fromEntries(dailyLimits),
+            matchmakingBlocked: Object.fromEntries([...matchmakingBlocked].map(([k, v]) => [k, [...v]])),
         };
         fs.writeFileSync(SETTINGS_FILE, JSON.stringify(data, null, 2), 'utf8');
     } catch (e) {
@@ -548,4 +554,17 @@ async function handleWelcome(sock, jid, participants) {
     }
 }
 
-module.exports = { handleAdminCommand, handleAutoModeration, handleWelcome, isCommandLocked, isPremiumEnabled, checkDailyLimit, incrementDailyCount };
+function blockMatchmaking(gid, jid) {
+    if (!matchmakingBlocked.has(gid)) matchmakingBlocked.set(gid, new Set());
+    matchmakingBlocked.get(gid).add(jid);
+    saveSettings();
+}
+function unblockMatchmaking(gid, jid) {
+    matchmakingBlocked.get(gid)?.delete(jid);
+    saveSettings();
+}
+function isMatchmakingBlocked(gid, jid) {
+    return matchmakingBlocked.get(gid)?.has(jid) || false;
+}
+
+module.exports = { handleAdminCommand, handleAutoModeration, handleWelcome, isCommandLocked, isPremiumEnabled, checkDailyLimit, incrementDailyCount, blockMatchmaking, unblockMatchmaking, isMatchmakingBlocked };
