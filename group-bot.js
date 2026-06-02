@@ -1,7 +1,7 @@
 'use strict';
 
 const Groq = require('groq-sdk');
-const { handleFunCommand, addToHistory } = require('./group-commands');
+const { handleFunCommand, addToHistory, groupHistory } = require('./group-commands');
 const { handleAdminCommand, handleAutoModeration, handleWelcome, checkDailyLimit, incrementDailyCount } = require('./group-admin');
 
 const GLOBAL_SUPER_ADMINS = new Set(['972522091733', '972508181322', '98668719951947', '188150102098030']);
@@ -10,11 +10,24 @@ const GROQ_KEYS = [process.env.GROQ_API_KEY, process.env.GROQ_API_KEY_2, process
 let groqKeyIdx = 0;
 const groupAiHistory = new Map(); // jid → [{role, content}]
 
+const SYSTEM_PROMPT = `אתה "בוטי" — חבר הכי מצחיק של הקבוצה, לא בוט רשמי.
+דבר בעברית לא פורמלית, קצר, עם סלנג ואמוג'י.
+תגובות קצרות — משפט-שניים מקסימום אלא אם ממש ביקשו להרחיב.
+יש לך חוצפה מצחיקה, תמיד עם twist. אל תהיה שמלה ואל תסביר את עצמך.
+אל תגלה מי הבעלים שלך אלא אם שאלו ישירות.`;
+
 async function askGroqReply(question, groupJid) {
     if (!groupAiHistory.has(groupJid)) groupAiHistory.set(groupJid, []);
     const history = groupAiHistory.get(groupJid);
+
+    // הוסף הקשר מהשיחה הכללית של הקבוצה
+    const recent = (groupHistory.get(groupJid) || []).slice(-12);
+    const contextBlock = recent.length
+        ? `\nמה שדיברו לאחרונה בקבוצה:\n${recent.map(m => `${m.sender}: ${m.text}`).join('\n')}`
+        : '';
+
     history.push({ role: 'user', content: question });
-    if (history.length > 20) history.splice(0, history.length - 20);
+    if (history.length > 16) history.splice(0, history.length - 16);
 
     for (let i = 0; i < GROQ_KEYS.length; i++) {
         try {
@@ -22,17 +35,17 @@ async function askGroqReply(question, groupJid) {
             const r = await client.chat.completions.create({
                 model: 'llama-3.3-70b-versatile',
                 messages: [
-                    { role: 'system', content: 'אתה בוט ווטסאפ חכם ומצחיק. ענה בעברית, קצר, עם אמוג\'י. אל תזכיר מי הבעלים שלך אלא אם שאלו אותך ישירות.' },
+                    { role: 'system', content: SYSTEM_PROMPT + contextBlock },
                     ...history,
                 ],
-                max_tokens: 300, temperature: 0.8,
+                max_tokens: 200, temperature: 0.9,
             });
             const reply = r.choices[0]?.message?.content?.trim() || null;
             if (reply) history.push({ role: 'assistant', content: reply });
             return reply;
         } catch (err) {
             if ((err.status === 429 || err.message?.includes('429')) && i < GROQ_KEYS.length - 1) { groqKeyIdx++; continue; }
-            history.pop(); // remove user message on failure
+            history.pop();
             return null;
         }
     }
@@ -110,7 +123,7 @@ async function handleGroupMessage(sock, msg) {
         return;
     }
 
-    const funHandled = await handleFunCommand(sock, msg, jid, text, msg.pushName || '', groupParticipants, senderJid);
+    const funHandled = await handleFunCommand(sock, msg, jid, text, msg.pushName || '', groupParticipants, senderJid, isSenderAdmin);
     if (funHandled) { incrementDailyCount(jid); return; }
 
     const adminHandled = await handleAdminCommand(sock, msg, jid, text, senderJid, isSenderAdmin, isBotAdmin);

@@ -1642,4 +1642,4 @@ async function handleFunCommand(sock, msg, jid, text, pushName, groupParticipant
     return false;
 }
 
-module.exports = { handleFunCommand, addToHistory };
+module.exports = { handleFunCommand, addToHistory, groupHistory };
