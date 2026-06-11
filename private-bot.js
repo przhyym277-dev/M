@@ -14,6 +14,7 @@ const SETTINGS_FILE = path.join(DATA_DIR, 'private-settings.json');
 let privateMode = 'all'; // 'all' | 'none' | 'whitelist'
 let privateWhitelist = new Set();
 let privateBlockedCommands = new Set(); // פקודות חסומות בפרטי (סרט, שיר, תמונה, סטיקר...)
+let tutorUsers = new Set(); // משתמשים במצב שיעורים (מורה פרטי AI)
 
 function loadSettings() {
     try {
@@ -22,7 +23,8 @@ function loadSettings() {
         privateMode = data.mode || 'all';
         privateWhitelist = new Set(data.whitelist || []);
         privateBlockedCommands = new Set(data.blockedCommands || []);
-        console.log(`✅ Private settings loaded (mode=${privateMode} whitelist=${privateWhitelist.size} blocked=${privateBlockedCommands.size})`);
+        tutorUsers = new Set(data.tutorUsers || []);
+        console.log(`✅ Private settings loaded (mode=${privateMode} whitelist=${privateWhitelist.size} blocked=${privateBlockedCommands.size} tutor=${tutorUsers.size})`);
     } catch (e) { console.error('private settings load error:', e.message); }
 }
 
@@ -33,6 +35,7 @@ function saveSettings() {
             mode: privateMode,
             whitelist: [...privateWhitelist],
             blockedCommands: [...privateBlockedCommands],
+            tutorUsers: [...tutorUsers],
         }, null, 2));
     } catch {}
 }
@@ -66,7 +69,24 @@ const GROQ_KEYS = [process.env.GROQ_API_KEY, process.env.GROQ_API_KEY_2, process
 let groqKeyIdx = 0;
 const dmHistory = new Map();
 
-async function askGroq(jid, text) {
+const DEFAULT_PROMPT = 'אתה בוט ווטסאפ חכם ומצחיק. ענה בעברית, עם אמוג\'י. אם ביקשו תשובה ארוכה — תן אותה.';
+
+const TUTOR_PROMPT = `אתה "מאסטר" — מורה פרטי AI לתלמידים בוואטסאפ, מבית מאסטר קוד.
+המטרה שלך: שהתלמיד יבין באמת — לא לתת לו תשובות מוכנות.
+
+כללים:
+1. לעולם אל תיתן את התשובה הסופית מיד — הסבר את הדרך שלב-שלב והוביל את התלמיד להגיע אליה בעצמו
+2. שאל שאלות מנחות: "מה לדעתך הצעד הראשון?", "מה קורה אם ננסה...?"
+3. כשהתלמיד טועה — אל תגיד "טעות". הסבר בעדינות איפה הבלבול ותן רמז שמקדם
+4. כשהתלמיד מצליח — פרגן בחום! 🎉
+5. התאם את ההסבר לגיל ולרמה שמשתקפים מהשאלות שלו
+6. הודעות קצרות וברורות — זה וואטסאפ, לא הרצאה. רעיון אחד בכל הודעה
+7. עברית פשוטה וברורה, אמוג'י במידה
+8. כל המקצועות: מתמטיקה, אנגלית, פיזיקה, לשון, תנ"ך, היסטוריה ועוד
+9. אם התלמיד שלח תמונה של תרגיל — קרא אותו והתחל ללוות אותו שלב-שלב
+10. בסוף כל נושא — תן שאלת תרגול קטנה כדי לוודא שהוא באמת הבין`;
+
+async function askGroq(jid, text, systemPrompt = DEFAULT_PROMPT) {
     if (!dmHistory.has(jid)) dmHistory.set(jid, []);
     const history = dmHistory.get(jid);
     history.push({ role: 'user', content: text });
@@ -78,7 +98,7 @@ async function askGroq(jid, text) {
             const r = await client.chat.completions.create({
                 model: 'llama-3.3-70b-versatile',
                 messages: [
-                    { role: 'system', content: 'אתה בוט ווטסאפ חכם ומצחיק. ענה בעברית, עם אמוג\'י. אם ביקשו תשובה ארוכה — תן אותה.' },
+                    { role: 'system', content: systemPrompt },
                     ...history,
                 ],
                 max_tokens: 1500,
@@ -99,6 +119,46 @@ async function askGroq(jid, text) {
     return null;
 }
 
+async function readExerciseImage(sock, msg) {
+    try {
+        const { downloadMediaMessage } = require('@whiskeysockets/baileys');
+        const pino = require('pino');
+        const buffer = await downloadMediaMessage(msg, 'buffer', {}, {
+            logger: pino({ level: 'silent' }),
+            reuploadRequest: sock.updateMediaMessage,
+        });
+        const base64 = buffer.toString('base64');
+        const mimeType = msg.message?.imageMessage?.mimetype || 'image/jpeg';
+        for (let i = 0; i < GROQ_KEYS.length; i++) {
+            try {
+                const client = new Groq({ apiKey: GROQ_KEYS[groqKeyIdx % GROQ_KEYS.length] });
+                const r = await client.chat.completions.create({
+                    model: 'meta-llama/llama-4-scout-17b-16e-instruct',
+                    messages: [{
+                        role: 'user',
+                        content: [
+                            { type: 'text', text: 'זו תמונה של תרגיל או שיעורי בית. העתק את התרגיל במדויק (טקסט, מספרים, נוסחאות) ותאר כל פרט שרלוונטי לפתרון. ענה בעברית.' },
+                            { type: 'image_url', image_url: { url: `data:${mimeType};base64,${base64}` } },
+                        ],
+                    }],
+                    max_tokens: 600,
+                    temperature: 0.2,
+                });
+                const out = r.choices[0]?.message?.content?.trim();
+                if (out) return out;
+                return null;
+            } catch (err) {
+                if ((err.status === 429 || err.message?.includes('429')) && i < GROQ_KEYS.length - 1) { groqKeyIdx++; continue; }
+                throw err;
+            }
+        }
+        return null;
+    } catch (err) {
+        console.error('tutor image error:', err.message?.slice(0, 80));
+        return null;
+    }
+}
+
 const normJid = (id) => (id || '').replace(/:.*@/, '@');
 
 function getText(msg) {
@@ -111,7 +171,9 @@ function getText(msg) {
 async function handlePrivateMessage(sock, msg) {
     const jid = normJid(msg.key.remoteJid);
     const text = getText(msg).trim();
-    if (!text) return;
+    const hasImage = !!msg.message?.imageMessage;
+    // תמונה בלי טקסט מותרת רק במצב שיעורים (צילום תרגיל)
+    if (!text && !(hasImage && tutorUsers.has(jid))) return;
 
     console.log(`📩 [פרטי] jid=${jid} mode=${privateMode} whitelist=${privateWhitelist.size}: ${text.slice(0, 60)}`);
 
@@ -312,6 +374,39 @@ async function handlePrivateMessage(sock, msg) {
 
     // ── בדיקת הרשאה ──────────────────────────────────────────────
     if (!canRespond(jid)) return;
+
+    // ── מצב שיעורים — מורה פרטי AI 🎓 ───────────────────────────
+    if (text === 'שיעורים') {
+        tutorUsers.add(jid);
+        dmHistory.delete(jid);
+        saveSettings();
+        await sock.sendMessage(jid, { text: '📚 *מצב שיעורים פעיל!*\n\nאני מאסטר — המורה הפרטי שלך 🎓\nשלח לי שאלה מכל מקצוע, או צלם תרגיל ושלח — ונפתור אותו יחד, שלב אחרי שלב.\n\nליציאה כתוב: *סיום שיעורים*' });
+        return;
+    }
+    if (tutorUsers.has(jid)) {
+        if (/^(סיום שיעורים|סיים שיעורים|יציאה משיעורים)$/.test(text)) {
+            tutorUsers.delete(jid);
+            dmHistory.delete(jid);
+            saveSettings();
+            await sock.sendMessage(jid, { text: '👋 יצאת ממצב שיעורים. כל הכבוד על הלמידה! 🎉\nלחזרה כתוב: *שיעורים*' });
+            return;
+        }
+        await sock.sendPresenceUpdate('composing', jid).catch(() => {});
+        let studentText = text;
+        if (hasImage) {
+            const exercise = await readExerciseImage(sock, msg);
+            if (!exercise) {
+                await sock.sendMessage(jid, { text: '😅 לא הצלחתי לקרוא את התמונה. נסה לצלם שוב באור טוב, או פשוט כתוב לי את התרגיל.' });
+                return;
+            }
+            studentText = text
+                ? `[התלמיד שלח תמונה של תרגיל: ${exercise}]\nהתלמיד כתב: ${text}`
+                : `[התלמיד שלח תמונה של תרגיל: ${exercise}]`;
+        }
+        const reply = await askGroq(jid, studentText, TUTOR_PROMPT);
+        await sock.sendMessage(jid, { text: reply || 'מצטער, לא הצלחתי לחשוב כרגע 😅 נסה שוב בעוד רגע.' });
+        return;
+    }
 
     // ── בדיקת חסימת פקודות בפרטי ────────────────────────────────
     const cmdWord = text.split(' ')[0];
