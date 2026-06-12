@@ -15,6 +15,7 @@ let privateMode = 'all'; // 'all' | 'none' | 'whitelist'
 let privateWhitelist = new Set();
 let privateBlockedCommands = new Set(); // פקודות חסומות בפרטי (סרט, שיר, תמונה, סטיקר...)
 let tutorUsers = new Set(); // משתמשים במצב שיעורים (מורה פרטי AI)
+let movieUsers = new Set(); // מספרי טלפון מאושרים לאתר הסרטים StreamIL
 
 function loadSettings() {
     try {
@@ -24,7 +25,8 @@ function loadSettings() {
         privateWhitelist = new Set(data.whitelist || []);
         privateBlockedCommands = new Set(data.blockedCommands || []);
         tutorUsers = new Set(data.tutorUsers || []);
-        console.log(`✅ Private settings loaded (mode=${privateMode} whitelist=${privateWhitelist.size} blocked=${privateBlockedCommands.size} tutor=${tutorUsers.size})`);
+        movieUsers = new Set(data.movieUsers || []);
+        console.log(`✅ Private settings loaded (mode=${privateMode} whitelist=${privateWhitelist.size} blocked=${privateBlockedCommands.size} tutor=${tutorUsers.size} movies=${movieUsers.size})`);
     } catch (e) { console.error('private settings load error:', e.message); }
 }
 
@@ -36,6 +38,7 @@ function saveSettings() {
             whitelist: [...privateWhitelist],
             blockedCommands: [...privateBlockedCommands],
             tutorUsers: [...tutorUsers],
+            movieUsers: [...movieUsers],
         }, null, 2));
     } catch {}
 }
@@ -375,6 +378,29 @@ async function handlePrivateMessage(sock, msg) {
     // ── בדיקת הרשאה ──────────────────────────────────────────────
     if (!canRespond(jid)) return;
 
+    // ── אתר הסרטים StreamIL — הצטרפות לרשימת המאושרים 🎬 ────────
+    if (text.startsWith('הוסף אותי לסרטים')) {
+        const arg = text.slice('הוסף אותי לסרטים'.length).replace(/\D/g, '');
+        let phone = null;
+        if (arg.length >= 9) phone = normalizePhone(arg);
+        else if (jid.endsWith('@s.whatsapp.net')) phone = normalizePhone(jid.split('@')[0]);
+        else if (msg.key?.senderPn) phone = normalizePhone(msg.key.senderPn.split('@')[0]);
+        if (!phone) {
+            await sock.sendMessage(jid, { text: '🎬 לא הצלחתי לזהות את מספר הטלפון שלך.\nכתוב את הפקודה עם המספר, למשל:\n*הוסף אותי לסרטים 0501234567*' });
+            return;
+        }
+        const local = '0' + phone.replace(/^972/, '');
+        if (movieUsers.has(phone)) {
+            await sock.sendMessage(jid, { text: `🎬 אתה כבר ברשימה! היכנס לאתר עם המספר *${local}* 🍿` });
+            return;
+        }
+        movieUsers.add(phone);
+        saveSettings();
+        console.log(`🎬 movie access added: ${phone}`);
+        await sock.sendMessage(jid, { text: `🎬 *נוספת לרשימת הסרטים!*\n\nהיכנס לאתר והקלד את מספר הטלפון שלך:\n*${local}*\n\nצפייה מהנה! 🍿` });
+        return;
+    }
+
     // ── מצב שיעורים — מורה פרטי AI 🎓 ───────────────────────────
     if (text === 'שיעורים') {
         tutorUsers.add(jid);
@@ -427,4 +453,11 @@ async function handlePrivateMessage(sock, msg) {
     }
 }
 
-module.exports = { handlePrivateMessage };
+function isMovieUser(phone) {
+    if (!phone) return false;
+    const digits = String(phone).replace(/\D/g, '');
+    if (digits.length < 9) return false;
+    return movieUsers.has(normalizePhone(digits));
+}
+
+module.exports = { handlePrivateMessage, isMovieUser };

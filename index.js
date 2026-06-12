@@ -6,7 +6,7 @@ const crm = require('./crm');
 const { generateQuote } = require('./quote');
 const { generateContract } = require('./contract');
 const { handleGroupMessage, handleGroupParticipantUpdate } = require('./group-bot');
-const { handlePrivateMessage } = require('./private-bot');
+const { handlePrivateMessage, isMovieUser } = require('./private-bot');
 const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion } = require('@whiskeysockets/baileys');
 const { Boom } = require('@hapi/boom');
 const pino = require('pino');
@@ -262,6 +262,12 @@ let sock = null;
 // Health check + QR server
 const PORT = process.env.PORT || 3000;
 http.createServer(async (req, res) => {
+    if (req.url.startsWith('/movies-check')) {
+        const phone = new URL(req.url, 'http://localhost').searchParams.get('phone') || '';
+        res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+        res.end(JSON.stringify({ allowed: isMovieUser(phone) }));
+        return;
+    }
     if (req.url === '/status') {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ status: botStatus, hasQR: !!currentQR }));
