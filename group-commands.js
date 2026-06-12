@@ -11,7 +11,7 @@ const path = require('path');
 const os = require('os');
 const youtubedl = require('youtube-dl-exec');
 const playdl = require('play-dl');
-const { isCommandLocked, isPremiumEnabled, blockMatchmaking, unblockMatchmaking, isMatchmakingBlocked } = require('./group-admin');
+const { isCommandLocked, isPremiumEnabled, blockMatchmaking, unblockMatchmaking, isMatchmakingBlocked, checkCommandCooldown, markCommandUsed } = require('./group-admin');
 const murderGame = require('./murder-game');
 let sharp; try { sharp = require('sharp'); } catch {}
 
@@ -679,6 +679,19 @@ async function handleFunCommand(sock, msg, jid, text, pushName, groupParticipant
         if (!isPrivate && lockedName && isCommandLocked(jid, lockedName)) {
             await sock.sendMessage(jid, { text: '🔒 פקודה זו נעולה על ידי מנהל הקבוצה.' });
             return true;
+        }
+
+        // ── בדיקת פסק זמן (cooldown) — מנהלים פטורים ────────────────
+        if (!isPrivate && lockedName && !isSenderAdmin) {
+            const cd = checkCommandCooldown(jid, lockedName);
+            if (!cd.allowed) {
+                const mins = Math.floor(cd.waitSeconds / 60);
+                const secs = cd.waitSeconds % 60;
+                const wait = mins > 0 ? `${mins} דק'${secs ? ` ${secs} שנ'` : ''}` : `${secs} שנ'`;
+                await sock.sendMessage(jid, { text: `⏲️ הפקודה *${lockedName}* בפסק זמן. נסה שוב בעוד ${wait}.` });
+                return true;
+            }
+            markCommandUsed(jid, lockedName);
         }
 
         // ── פינג ──────────────────────────────────────────────────

@@ -11,9 +11,11 @@ const groupSettings = new Map();
 const warnings = new Map();
 const lockedCommands = new Map();
 const groupWelcomeTemplates = new Map();
-const premiumSettings = new Map(); // gid → { שיר: bool, סרט: bool, תמונה: bool }
+const premiumSettings = new Map(); // gid → { __all__: bool, שיר: bool, סרט: bool, ... } — per-command overrides + group default
 const dailyLimits    = new Map(); // gid → { limit: N, count: N, date: 'YYYY-MM-DD' }
 const matchmakingBlocked = new Map(); // gid → Set<jid>
+const commandCooldowns = new Map(); // gid → { cmdName: minutes } — admin-set cooldown per command (persisted)
+const cooldownLastUsed = new Map(); // gid → { cmdName: timestamp } — runtime only, resets on restart
 
 const PREMIUM_COMMANDS = ['שיר', 'סרט', 'סדרה', 'תמונה', 'ניתוח קבוצה', 'ראפ בטל'];
 
@@ -52,6 +54,10 @@ function loadSettings() {
             for (const [gid, jids] of Object.entries(raw.matchmakingBlocked))
                 matchmakingBlocked.set(gid, new Set(jids));
         }
+        if (raw.commandCooldowns) {
+            for (const [gid, c] of Object.entries(raw.commandCooldowns))
+                commandCooldowns.set(gid, c);
+        }
         console.log(`✅ Group settings loaded (${groupSettings.size} groups)`);
     } catch (e) {
         console.error('Failed to load group settings:', e.message);
@@ -69,6 +75,7 @@ function saveSettings() {
             premiumSettings: Object.fromEntries(premiumSettings),
             dailyLimits: Object.fromEntries(dailyLimits),
             matchmakingBlocked: Object.fromEntries([...matchmakingBlocked].map(([k, v]) => [k, [...v]])),
+            commandCooldowns: Object.fromEntries(commandCooldowns),
         };
         fs.writeFileSync(SETTINGS_FILE, JSON.stringify(data, null, 2), 'utf8');
     } catch (e) {
@@ -81,6 +88,9 @@ loadSettings();
 const GLOBAL_SUPER_ADMINS = new Set(['972522091733', '972508181322', '98668719951947', '188150102098030']);
 
 const LOCKABLE_COMMANDS = ['בדיחות','טיפ','עובדה','ציטוט','טריוויה','חידה','נכון או אמת','מזל','שידוך','רולטה','ראפ','תרגם','מחמאה','עלבון','מתכון','תרגיל','מילה','שיר','סרט','סקר','הצבעה','אנונימי','תזכורת','ספירה','סיכום','מי אמר','גימטריה','הגרלה','חשב','חזור','qr','תמלל','פרופיל','תמונה','סטיקר','משחקים'];
+
+// פקודות שאפשר להגדיר להן פסק זמן (cooldown) — חייב להתאים לשמות הקנוניים שמזהה getLockedCommandName
+const COOLDOWNABLE_COMMANDS = new Set([...LOCKABLE_COMMANDS, ...PREMIUM_COMMANDS, 'ראפ בטל', 'ניתוח קבוצה', 'סדרה']);
 
 function isGlobalAdmin(senderJid) {
     return GLOBAL_SUPER_ADMINS.has(senderJid.split('@')[0]);
@@ -111,8 +121,43 @@ function getPremium(gid) {
     return premiumSettings.get(gid);
 }
 
+// הרשאות פרימיום כבויות כברירת מחדל בקבוצות.
+// p[cmd] === true/false  → override ספציפי לפקודה
+// p.__all__ === true     → הופעל גורף לקבוצה ("פרימיום הכל פעיל")
+// אחרת                   → כבוי
 function isPremiumEnabled(gid, cmd) {
-    return getPremium(gid)[cmd] !== false;
+    const p = getPremium(gid);
+    if (p[cmd] === true) return true;
+    if (p[cmd] === false) return false;
+    return p.__all__ === true;
+}
+
+function getCooldowns(gid) {
+    if (!commandCooldowns.has(gid)) commandCooldowns.set(gid, {});
+    return commandCooldowns.get(gid);
+}
+
+function setCommandCooldown(gid, cmdName, minutes) {
+    const c = getCooldowns(gid);
+    if (minutes > 0) c[cmdName] = minutes;
+    else delete c[cmdName];
+    saveSettings();
+}
+
+function checkCommandCooldown(gid, cmdName) {
+    const minutes = getCooldowns(gid)[cmdName];
+    if (!minutes) return { allowed: true };
+    const last = cooldownLastUsed.get(gid)?.[cmdName] || 0;
+    const windowMs = minutes * 60 * 1000;
+    const elapsed = Date.now() - last;
+    if (elapsed >= windowMs) return { allowed: true };
+    return { allowed: false, waitSeconds: Math.ceil((windowMs - elapsed) / 1000) };
+}
+
+function markCommandUsed(gid, cmdName) {
+    if (!getCooldowns(gid)[cmdName]) return;
+    if (!cooldownLastUsed.has(gid)) cooldownLastUsed.set(gid, {});
+    cooldownLastUsed.get(gid)[cmdName] = Date.now();
 }
 
 function todayStr() {
@@ -154,10 +199,11 @@ async function handleAdminCommand(sock, msg, jid, text, senderJid, isSenderAdmin
     if (trimmed === 'הרשאות פרימיום') {
         if (!isGlobalAdmin(senderJid)) { await sock.sendMessage(jid, { text: '🚫 פקודה זו זמינה לבעלי הבוט בלבד.' }); return true; }
         const p = getPremium(jid);
-        const lines = PREMIUM_COMMANDS.map(c => `${p[c] !== false ? '✅' : '❌'} *${c}*`).join('\n');
+        const allLine = p.__all__ === true ? '🟢 *מצב גורף:* כל הפרימיום פעיל' : '🔴 *מצב גורף:* כבוי (ברירת מחדל)';
+        const lines = PREMIUM_COMMANDS.map(c => `${isPremiumEnabled(jid, c) ? '✅' : '❌'} *${c}*`).join('\n');
         const daily = getDailyStatus(jid);
         const dailyLine = daily ? `\n📊 *הגבלת הודעות:* ${daily.count}/${daily.limit} היום` : '\n📊 *הגבלת הודעות:* ללא הגבלה';
-        await sock.sendMessage(jid, { text: `👑 *הרשאות פרימיום לקבוצה זו:*\n\n${lines}${dailyLine}\n\nשינוי פקודה: *פרימיום [פקודה] [פעיל/כבוי]*\nהגבלת הודעות: *פרימיום הגבלה [מספר]* / *פרימיום הגבלה כבוי*` });
+        await sock.sendMessage(jid, { text: `👑 *הרשאות פרימיום לקבוצה זו:*\n${allLine}\n\n${lines}${dailyLine}\n\nהפעלה/כיבוי גורף: *פרימיום הכל פעיל* / *פרימיום הכל כבוי*\nשינוי פקודה: *פרימיום [פקודה] [פעיל/כבוי]*\nהגבלת הודעות: *פרימיום הגבלה [מספר]* / *פרימיום הגבלה כבוי*` });
         return true;
     }
 
@@ -166,6 +212,22 @@ async function handleAdminCommand(sock, msg, jid, text, senderJid, isSenderAdmin
         const parts = trimmed.slice('פרימיום '.length).trim().split(' ');
         const cmdName = parts[0];
         const state = parts[1];
+
+        // הפעלה/כיבוי גורף של כל הרשאות הפרימיום
+        if (cmdName === 'הכל') {
+            if (!['פעיל','כבוי'].includes(state)) {
+                await sock.sendMessage(jid, { text: '⚠️ כתוב: *פרימיום הכל פעיל* / *פרימיום הכל כבוי*' });
+                return true;
+            }
+            const p = getPremium(jid);
+            for (const c of PREMIUM_COMMANDS) delete p[c]; // ניקוי override-ים ספציפיים כדי שהמצב הגורף יחול
+            p.__all__ = state === 'פעיל';
+            saveSettings();
+            await sock.sendMessage(jid, { text: state === 'פעיל'
+                ? '👑 כל הרשאות הפרימיום *הופעלו* בקבוצה זו ✅'
+                : '👑 כל הרשאות הפרימיום *כובו* בקבוצה זו ❌' });
+            return true;
+        }
 
         // הגבלת הודעות יומית
         if (cmdName === 'הגבלה') {
@@ -263,14 +325,46 @@ async function handleAdminCommand(sock, msg, jid, text, senderJid, isSenderAdmin
             const locked = getLockedSet(jid);
             const lines = LOCKABLE_COMMANDS.map((c, i) => `${i + 1}. ${locked.has(c) ? '🔒' : '🔓'} ${c}`);
             const linkStatus = settings.linkCommandPublic ? '🔓 זמין לכולם' : '🔒 מנהלים בלבד';
+            const cds = Object.entries(getCooldowns(jid));
+            const cdLine = cds.length
+                ? `\n\n⏲️ *פסקי זמן פעילים:*\n${cds.map(([c, m]) => `• ${c} — כל ${m} דק'`).join('\n')}`
+                : '';
             await sock.sendMessage(jid, {
                 text: `🛡️ *הרשאות קבוצה*\n\n` +
                     `📋 *פקודות כיף (נעל/פתח):*\n${lines.join('\n')}\n\n` +
-                    `⚙️ *פקודות ניהול:*\n• קישור — ${linkStatus}\n\n` +
+                    `⚙️ *פקודות ניהול:*\n• קישור — ${linkStatus}${cdLine}\n\n` +
                     `כתוב *נעל [מספר]* / *פתח [מספר]* לנעילת פקודת כיף\n` +
-                    `כתוב *קישור מנהלים* / *קישור הכל* לשינוי הרשאת קישור`
+                    `כתוב *קישור מנהלים* / *קישור הכל* לשינוי הרשאת קישור\n` +
+                    `כתוב *פסקזמן [פקודה] [דקות]* להגבלת קצב פקודה`
             });
         } catch (e) {}
+        return true;
+    }
+
+    if (trimmed === 'פסקזמן' || trimmed.startsWith('פסקזמן ')) {
+        if (!isAdmin) { await sock.sendMessage(jid, { text: `🚫 רק מנהלים יכולים להשתמש בפקודה זו.` }); return true; }
+        const rest = trimmed.slice('פסקזמן'.length).trim();
+        if (!rest) {
+            const cds = Object.entries(getCooldowns(jid));
+            const list = cds.length ? cds.map(([c, m]) => `• *${c}* — כל ${m} דק'`).join('\n') : '_(לא הוגדרו פסקי זמן)_';
+            await sock.sendMessage(jid, { text: `⏲️ *פסקי זמן לפקודות:*\n${list}\n\nהגדרה: *פסקזמן [שם פקודה] [דקות]*\nלדוגמה: פסקזמן סרט 5\nביטול: *פסקזמן [שם פקודה] 0*` });
+            return true;
+        }
+        const parts = rest.split(/\s+/);
+        const minutes = parseInt(parts[parts.length - 1], 10);
+        const cmdName = parts.slice(0, -1).join(' ');
+        if (!cmdName || isNaN(minutes) || minutes < 0) {
+            await sock.sendMessage(jid, { text: '⚠️ כתוב: *פסקזמן [שם פקודה] [דקות]*\nלדוגמה: פסקזמן סרט 5\nלביטול: פסקזמן סרט 0' });
+            return true;
+        }
+        if (!COOLDOWNABLE_COMMANDS.has(cmdName)) {
+            await sock.sendMessage(jid, { text: `⚠️ הפקודה *${cmdName}* לא מזוהה. אפשר להגביל פקודות כמו: סרט, סדרה, שיר, תמונה, בדיחות, ראפ, תרגם וכו'.` });
+            return true;
+        }
+        setCommandCooldown(jid, cmdName, minutes);
+        await sock.sendMessage(jid, { text: minutes > 0
+            ? `⏲️ הפקודה *${cmdName}* מוגבלת כעת לשימוש אחד כל *${minutes} דקות* בקבוצה זו.`
+            : `✅ פסק הזמן לפקודה *${cmdName}* בוטל.` });
         return true;
     }
 
@@ -567,4 +661,4 @@ function isMatchmakingBlocked(gid, jid) {
     return matchmakingBlocked.get(gid)?.has(jid) || false;
 }
 
-module.exports = { handleAdminCommand, handleAutoModeration, handleWelcome, isCommandLocked, isPremiumEnabled, checkDailyLimit, incrementDailyCount, blockMatchmaking, unblockMatchmaking, isMatchmakingBlocked };
+module.exports = { handleAdminCommand, handleAutoModeration, handleWelcome, isCommandLocked, isPremiumEnabled, checkDailyLimit, incrementDailyCount, blockMatchmaking, unblockMatchmaking, isMatchmakingBlocked, checkCommandCooldown, markCommandUsed };
