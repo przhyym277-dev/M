@@ -390,14 +390,15 @@ async function handlePrivateMessage(sock, msg) {
             return;
         }
         const local = '0' + phone.replace(/^972/, '');
+        const MOVIES_URL = 'https://yair681.github.io/streamil/';
         if (movieUsers.has(phone)) {
-            await sock.sendMessage(jid, { text: `🎬 אתה כבר ברשימה! היכנס לאתר עם המספר *${local}* 🍿` });
+            await sock.sendMessage(jid, { text: `🎬 אתה כבר ברשימה! היכנס לאתר עם המספר *${local}* 🍿\n${MOVIES_URL}` });
             return;
         }
         movieUsers.add(phone);
         saveSettings();
         console.log(`🎬 movie access added: ${phone}`);
-        await sock.sendMessage(jid, { text: `🎬 *נוספת לרשימת הסרטים!*\n\nהיכנס לאתר והקלד את מספר הטלפון שלך:\n*${local}*\n\nצפייה מהנה! 🍿` });
+        await sock.sendMessage(jid, { text: `🎬 *נוספת לרשימת הסרטים!*\n\nהיכנס לאתר והקלד את מספר הטלפון שלך:\n*${local}*\n\n${MOVIES_URL}\n\nצפייה מהנה! 🍿` });
         return;
     }
 
