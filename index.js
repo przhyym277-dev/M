@@ -668,10 +668,6 @@ function parseOwnerCommand(text) {
     return null;
 }
 
-function normalizePhone(phone) {
-    if (phone.startsWith('0')) return '972' + phone.slice(1);
-    return phone;
-}
 
 function jidToPhone(jid) {
     if (jid.endsWith('@lid')) return null; // no real phone for lid JIDs
