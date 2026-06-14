@@ -16,6 +16,9 @@ let privateWhitelist = new Set();
 let privateBlockedCommands = new Set(); // פקודות חסומות בפרטי (סרט, שיר, תמונה, סטיקר...)
 let tutorUsers = new Set(); // משתמשים במצב שיעורים (מורה פרטי AI)
 let movieUsers = new Set(); // מספרי טלפון מאושרים לאתר הסרטים StreamIL
+let movieTokens = {}; // phone -> token כניסה קבועה לאתר (אחרי אימות קוד)
+const movieCodes = new Map(); // phone -> { code, expires, attempts, lastSent }
+let moviesActiveGroupJid = null; // קבוצה פעילה לאימות כניסה לאתר הסרטים
 
 function loadSettings() {
     try {
@@ -26,7 +29,9 @@ function loadSettings() {
         privateBlockedCommands = new Set(data.blockedCommands || []);
         tutorUsers = new Set(data.tutorUsers || []);
         movieUsers = new Set(data.movieUsers || []);
-        console.log(`✅ Private settings loaded (mode=${privateMode} whitelist=${privateWhitelist.size} blocked=${privateBlockedCommands.size} tutor=${tutorUsers.size} movies=${movieUsers.size})`);
+        movieTokens = data.movieTokens || {};
+        moviesActiveGroupJid = data.moviesActiveGroupJid || null;
+        console.log(`✅ Private settings loaded (mode=${privateMode} whitelist=${privateWhitelist.size} blocked=${privateBlockedCommands.size} tutor=${tutorUsers.size} movies=${movieUsers.size} moviesGroup=${moviesActiveGroupJid || 'none'})`);
     } catch (e) { console.error('private settings load error:', e.message); }
 }
 
@@ -39,6 +44,8 @@ function saveSettings() {
             blockedCommands: [...privateBlockedCommands],
             tutorUsers: [...tutorUsers],
             movieUsers: [...movieUsers],
+            movieTokens,
+            moviesActiveGroupJid,
         }, null, 2));
     } catch {}
 }
@@ -461,4 +468,43 @@ function isMovieUser(phone) {
     return movieUsers.has(normalizePhone(digits));
 }
 
-module.exports = { handlePrivateMessage, isMovieUser };
+// יוצר קוד אימות בן 6 ספרות לכניסה לאתר (תקף 5 דקות, קוד חדש לכל היותר פעם בדקה)
+function createMovieCode(phone) {
+    const p = normalizePhone(String(phone).replace(/\D/g, ''));
+    if (!movieUsers.has(p)) return { error: 'not_allowed' };
+    const now = Date.now();
+    const existing = movieCodes.get(p);
+    if (existing && now - existing.lastSent < 60 * 1000) return { error: 'cooldown' };
+    const code = String(Math.floor(100000 + Math.random() * 900000));
+    movieCodes.set(p, { code, expires: now + 5 * 60 * 1000, attempts: 0, lastSent: now });
+    return { phone: p, code };
+}
+
+function verifyMovieCode(phone, code) {
+    const p = normalizePhone(String(phone).replace(/\D/g, ''));
+    const entry = movieCodes.get(p);
+    if (!entry) return null;
+    if (Date.now() > entry.expires || entry.attempts >= 5) { movieCodes.delete(p); return null; }
+    entry.attempts++;
+    if (entry.code !== String(code).trim()) return null;
+    movieCodes.delete(p);
+    const token = require('crypto').randomBytes(16).toString('hex');
+    movieTokens[p] = token;
+    saveSettings();
+    return token;
+}
+
+function checkMovieToken(phone, token) {
+    if (!phone || !token) return false;
+    const p = normalizePhone(String(phone).replace(/\D/g, ''));
+    return movieUsers.has(p) && movieTokens[p] === token;
+}
+
+function getMoviesActiveGroupJid() { return moviesActiveGroupJid; }
+
+function setMoviesActiveGroupJid(jid) {
+    moviesActiveGroupJid = jid || null;
+    saveSettings();
+}
+
+module.exports = { handlePrivateMessage, isMovieUser, createMovieCode, verifyMovieCode, checkMovieToken, getMoviesActiveGroupJid, setMoviesActiveGroupJid };

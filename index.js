@@ -6,7 +6,7 @@ const crm = require('./crm');
 const { generateQuote } = require('./quote');
 const { generateContract } = require('./contract');
 const { handleGroupMessage, handleGroupParticipantUpdate } = require('./group-bot');
-const { handlePrivateMessage, isMovieUser } = require('./private-bot');
+const { handlePrivateMessage, isMovieUser, createMovieCode, verifyMovieCode, checkMovieToken, getMoviesActiveGroupJid } = require('./private-bot');
 const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion } = require('@whiskeysockets/baileys');
 const { Boom } = require('@hapi/boom');
 const pino = require('pino');
@@ -261,12 +261,66 @@ let sock = null;
 
 // Health check + QR server
 const PORT = process.env.PORT || 3000;
+// מאתר את קבוצת "בוטיקס" לשליחת קודי אימות לאתר הסרטים
+let moviesGroupJid = null;
+async function findMoviesGroup() {
+    if (moviesGroupJid) return moviesGroupJid;
+    const groups = await sock.groupFetchAllParticipating();
+    for (const [gjid, g] of Object.entries(groups)) {
+        if ((g.subject || '').includes('בוטיקס')) { moviesGroupJid = gjid; return gjid; }
+    }
+    return null;
+}
+
 http.createServer(async (req, res) => {
-    if (req.url.startsWith('/movies-check')) {
-        const phone = new URL(req.url, 'http://localhost').searchParams.get('phone') || '';
-        res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
-        res.end(JSON.stringify({ allowed: isMovieUser(phone) }));
-        return;
+    if (req.url.startsWith('/movies-')) {
+        const u = new URL(req.url, 'http://localhost');
+        const phone = u.searchParams.get('phone') || '';
+        const json = (obj) => {
+            res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+            res.end(JSON.stringify(obj));
+        };
+        if (u.pathname === '/movies-check') {
+            const groupJid = getMoviesActiveGroupJid();
+            if (!groupJid) return json({ allowed: false, reason: 'no_active_group' });
+            if (!sock || botStatus !== 'connected') return json({ allowed: false, reason: 'bot_offline' });
+            try {
+                const digits = String(phone).replace(/\D/g, '');
+                const normalized = digits.startsWith('972') ? digits : digits.startsWith('0') ? '972' + digits.slice(1) : '972' + digits;
+                const meta = await sock.groupMetadata(groupJid);
+                const found = meta.participants.some(p => {
+                    const num = (p.id || '').replace(/\D/g, '');
+                    return num === normalized || num === digits;
+                });
+                return json({ allowed: found });
+            } catch (e) {
+                console.error('movies-check error:', e.message);
+                return json({ allowed: false, reason: 'error' });
+            }
+        }
+        if (u.pathname === '/movies-code') {
+            if (!isMovieUser(phone)) return json({ sent: false, reason: 'not_allowed' });
+            if (!sock || botStatus !== 'connected') return json({ sent: false, reason: 'bot_offline' });
+            const r = createMovieCode(phone);
+            if (r.error) return json({ sent: false, reason: r.error });
+            try {
+                const groupJid = await findMoviesGroup();
+                if (!groupJid) return json({ sent: false, reason: 'group_not_found' });
+                const userJid = `${r.phone}@s.whatsapp.net`;
+                await sock.sendMessage(groupJid, {
+                    text: `🎬 קוד אימות לאתר הסרטים עבור @${r.phone}:\n\n*${r.code}*\n\nהקוד תקף ל-5 דקות.`,
+                    mentions: [userJid],
+                });
+                return json({ sent: true });
+            } catch (e) {
+                console.error('movies-code send error:', e.message);
+                return json({ sent: false, reason: 'send_failed' });
+            }
+        }
+        if (u.pathname === '/movies-verify') {
+            const token = verifyMovieCode(phone, u.searchParams.get('code') || '');
+            return json(token ? { ok: true, token } : { ok: false });
+        }
     }
     if (req.url === '/status') {
         res.writeHead(200, { 'Content-Type': 'application/json' });
