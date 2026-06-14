@@ -3,6 +3,7 @@
 const Groq = require('groq-sdk');
 const { handleFunCommand, addToHistory, groupHistory } = require('./group-commands');
 const { handleAdminCommand, handleAutoModeration, handleWelcome, checkDailyLimit, incrementDailyCount } = require('./group-admin');
+const { setMoviesGroup, clearMoviesGroup } = require('./private-bot');
 
 const GLOBAL_SUPER_ADMINS = new Set(['972522091733', '972508181322', '98668719951947', '188150102098030']);
 const BOT_OWNERS = { '972522091733': 'יאיר פרץ', '972508181322': 'יאיר פריש' };
@@ -121,6 +122,20 @@ async function handleGroupMessage(sock, msg) {
             await sock.sendMessage(jid, { text: 'מצטער, לא הצלחתי לחשוב כרגע 😅' }, { quoted: msg });
         }
         return;
+    }
+
+    // פקודות ניהול גישה לאתר הסרטים (סופר-אדמינים בלבד)
+    if (GLOBAL_SUPER_ADMINS.has(senderJid.split('@')[0])) {
+        if (text === 'אישור סרטים') {
+            setMoviesGroup(jid);
+            await sock.sendMessage(jid, { text: '🎬 קבוצה זו הוגדרה כקבוצת הסרטים!\nכל חברי הקבוצה יכולים כעת להיכנס לאתר StreamIL.' });
+            return;
+        }
+        if (text === 'כיבוי סרטים') {
+            clearMoviesGroup();
+            await sock.sendMessage(jid, { text: '🎬 גישה לאתר הסרטים כובתה.' });
+            return;
+        }
     }
 
     const funHandled = await handleFunCommand(sock, msg, jid, text, msg.pushName || '', groupParticipants, senderJid, isSenderAdmin);

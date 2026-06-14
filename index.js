@@ -6,7 +6,7 @@ const crm = require('./crm');
 const { generateQuote } = require('./quote');
 const { generateContract } = require('./contract');
 const { handleGroupMessage, handleGroupParticipantUpdate } = require('./group-bot');
-const { handlePrivateMessage, isMovieUser, createMovieCode, verifyMovieCode, checkMovieToken } = require('./private-bot');
+const { handlePrivateMessage, isMovieUser, createMovieCode, verifyMovieCode, checkMovieToken, getMoviesGroupJid, normalizePhone } = require('./private-bot');
 const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion } = require('@whiskeysockets/baileys');
 const { Boom } = require('@hapi/boom');
 const pino = require('pino');
@@ -281,7 +281,19 @@ http.createServer(async (req, res) => {
             res.end(JSON.stringify(obj));
         };
         if (u.pathname === '/movies-check') {
-            return json({ allowed: checkMovieToken(phone, u.searchParams.get('token') || '') });
+            const groupJid = getMoviesGroupJid();
+            if (!groupJid || !sock || botStatus !== 'connected') return json({ allowed: false });
+            try {
+                const meta = await sock.groupMetadata(groupJid);
+                const normalized = normalizePhone(phone.replace(/\D/g, ''));
+                const found = meta.participants.some(p => {
+                    const num = normalizePhone(p.id.split('@')[0].replace(/\D/g, ''));
+                    return num === normalized;
+                });
+                return json({ allowed: found });
+            } catch (e) {
+                return json({ allowed: false });
+            }
         }
         if (u.pathname === '/movies-code') {
             if (!isMovieUser(phone)) return json({ sent: false, reason: 'not_allowed' });
