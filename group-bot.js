@@ -55,9 +55,19 @@ async function askGroqReply(question, groupJid) {
 }
 
 function getGroupText(msg) {
-    return msg.message?.conversation
-        || msg.message?.extendedTextMessage?.text
-        || msg.message?.imageMessage?.caption
+    const m = msg.message;
+    if (!m) return '';
+    const types = Object.keys(m);
+    if (!m.conversation && !m.extendedTextMessage && !m.imageMessage)
+        console.log('📦 msg types:', types.join(','));
+    return m.conversation
+        || m.extendedTextMessage?.text
+        || m.imageMessage?.caption
+        || m.videoMessage?.caption
+        || m.ephemeralMessage?.message?.conversation
+        || m.ephemeralMessage?.message?.extendedTextMessage?.text
+        || m.viewOnceMessage?.message?.conversation
+        || m.documentWithCaptionMessage?.message?.imageMessage?.caption
         || '';
 }
 
