@@ -3,7 +3,6 @@
 const Groq = require('groq-sdk');
 const { handleFunCommand, addToHistory, groupHistory } = require('./group-commands');
 const { handleAdminCommand, handleAutoModeration, handleWelcome, checkDailyLimit, incrementDailyCount } = require('./group-admin');
-const { getMoviesActiveGroupJid, setMoviesActiveGroupJid } = require('./private-bot');
 
 const GLOBAL_SUPER_ADMINS = new Set(['972522091733', '972508181322', '98668719951947', '188150102098030']);
 const BOT_OWNERS = { '972522091733': 'יאיר פרץ', '972508181322': 'יאיר פריש' };
@@ -121,36 +120,6 @@ async function handleGroupMessage(sock, msg) {
         } else {
             await sock.sendMessage(jid, { text: 'מצטער, לא הצלחתי לחשוב כרגע 😅' }, { quoted: msg });
         }
-        return;
-    }
-
-    // ── פקודות אישור/כיבוי סרטים (אדמין קבוצה בלבד) ────────────
-    if (text === 'אישור סרטים') {
-        if (!isSenderAdmin) {
-            await sock.sendMessage(jid, { text: '🔒 רק מנהלי הקבוצה יכולים להפעיל פקודה זו.' }, { quoted: msg });
-            return;
-        }
-        const current = getMoviesActiveGroupJid();
-        if (current && current !== jid) {
-            await sock.sendMessage(jid, { text: '⚠️ כבר קיימת קבוצה פעילה אחרת. כבה אותה קודם עם הפקודה *כיבוי סרטים* בקבוצה ההיא.' }, { quoted: msg });
-            return;
-        }
-        setMoviesActiveGroupJid(jid);
-        await sock.sendMessage(jid, { text: '✅ *הקבוצה הזו הוגדרה כקבוצת הסרטים הפעילה!*\n\nעכשיו כל מי שחבר בקבוצה יוכל להיכנס לאתר StreamIL.\nלכיבוי שלח: *כיבוי סרטים*' }, { quoted: msg });
-        return;
-    }
-
-    if (text === 'כיבוי סרטים') {
-        if (!isSenderAdmin) {
-            await sock.sendMessage(jid, { text: '🔒 רק מנהלי הקבוצה יכולים להפעיל פקודה זו.' }, { quoted: msg });
-            return;
-        }
-        if (getMoviesActiveGroupJid() !== jid) {
-            await sock.sendMessage(jid, { text: '⚠️ הקבוצה הזו אינה הקבוצה הפעילה כרגע.' }, { quoted: msg });
-            return;
-        }
-        setMoviesActiveGroupJid(null);
-        await sock.sendMessage(jid, { text: '🔴 *אישור הסרטים כובה.*\nכעת אף אחד לא יוכל להיכנס לאתר דרך קבוצה זו.' }, { quoted: msg });
         return;
     }
 

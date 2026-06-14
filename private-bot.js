@@ -18,8 +18,6 @@ let tutorUsers = new Set(); // משתמשים במצב שיעורים (מורה 
 let movieUsers = new Set(); // מספרי טלפון מאושרים לאתר הסרטים StreamIL
 let movieTokens = {}; // phone -> token כניסה קבועה לאתר (אחרי אימות קוד)
 const movieCodes = new Map(); // phone -> { code, expires, attempts, lastSent }
-let moviesActiveGroupJid = null; // קבוצה פעילה לאימות כניסה לאתר הסרטים
-
 function loadSettings() {
     try {
         if (!fs.existsSync(SETTINGS_FILE)) return;
@@ -30,8 +28,7 @@ function loadSettings() {
         tutorUsers = new Set(data.tutorUsers || []);
         movieUsers = new Set(data.movieUsers || []);
         movieTokens = data.movieTokens || {};
-        moviesActiveGroupJid = data.moviesActiveGroupJid || null;
-        console.log(`✅ Private settings loaded (mode=${privateMode} whitelist=${privateWhitelist.size} blocked=${privateBlockedCommands.size} tutor=${tutorUsers.size} movies=${movieUsers.size} moviesGroup=${moviesActiveGroupJid || 'none'})`);
+        console.log(`✅ Private settings loaded (mode=${privateMode} whitelist=${privateWhitelist.size} blocked=${privateBlockedCommands.size} tutor=${tutorUsers.size} movies=${movieUsers.size})`);
     } catch (e) { console.error('private settings load error:', e.message); }
 }
 
@@ -45,7 +42,6 @@ function saveSettings() {
             tutorUsers: [...tutorUsers],
             movieUsers: [...movieUsers],
             movieTokens,
-            moviesActiveGroupJid,
         }, null, 2));
     } catch {}
 }
@@ -500,11 +496,4 @@ function checkMovieToken(phone, token) {
     return movieUsers.has(p) && movieTokens[p] === token;
 }
 
-function getMoviesActiveGroupJid() { return moviesActiveGroupJid; }
-
-function setMoviesActiveGroupJid(jid) {
-    moviesActiveGroupJid = jid || null;
-    saveSettings();
-}
-
-module.exports = { handlePrivateMessage, isMovieUser, createMovieCode, verifyMovieCode, checkMovieToken, getMoviesActiveGroupJid, setMoviesActiveGroupJid };
+module.exports = { handlePrivateMessage, isMovieUser, createMovieCode, verifyMovieCode, checkMovieToken };

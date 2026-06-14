@@ -6,7 +6,7 @@ const crm = require('./crm');
 const { generateQuote } = require('./quote');
 const { generateContract } = require('./contract');
 const { handleGroupMessage, handleGroupParticipantUpdate } = require('./group-bot');
-const { handlePrivateMessage, isMovieUser, createMovieCode, verifyMovieCode, checkMovieToken, getMoviesActiveGroupJid } = require('./private-bot');
+const { handlePrivateMessage, isMovieUser, createMovieCode, verifyMovieCode, checkMovieToken } = require('./private-bot');
 const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion } = require('@whiskeysockets/baileys');
 const { Boom } = require('@hapi/boom');
 const pino = require('pino');
@@ -273,36 +273,15 @@ async function findMoviesGroup() {
 }
 
 http.createServer(async (req, res) => {
-    // CORS — allow all origins for all routes
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
-    if (req.method === 'OPTIONS') { res.writeHead(204); res.end(); return; }
-
     if (req.url.startsWith('/movies-')) {
         const u = new URL(req.url, 'http://localhost');
         const phone = u.searchParams.get('phone') || '';
         const json = (obj) => {
-            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
             res.end(JSON.stringify(obj));
         };
         if (u.pathname === '/movies-check') {
-            const groupJid = getMoviesActiveGroupJid();
-            if (!groupJid) return json({ allowed: false, reason: 'no_active_group' });
-            if (!sock || botStatus !== 'connected') return json({ allowed: false, reason: 'bot_offline' });
-            try {
-                const digits = String(phone).replace(/\D/g, '');
-                const normalized = digits.startsWith('972') ? digits : digits.startsWith('0') ? '972' + digits.slice(1) : '972' + digits;
-                const meta = await sock.groupMetadata(groupJid);
-                const found = meta.participants.some(p => {
-                    const num = (p.id || '').replace(/\D/g, '');
-                    return num === normalized || num === digits;
-                });
-                return json({ allowed: found });
-            } catch (e) {
-                console.error('movies-check error:', e.message);
-                return json({ allowed: false, reason: 'error' });
-            }
+            return json({ allowed: checkMovieToken(phone, u.searchParams.get('token') || '') });
         }
         if (u.pathname === '/movies-code') {
             if (!isMovieUser(phone)) return json({ sent: false, reason: 'not_allowed' });
