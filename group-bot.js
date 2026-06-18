@@ -137,7 +137,7 @@ async function handleGroupMessage(sock, msg) {
     if (GLOBAL_SUPER_ADMINS.has(senderJid.split('@')[0])) {
         if (text === 'אישור סרטים') {
             setMoviesGroup(jid);
-            await sock.sendMessage(jid, { text: '🎬 קבוצה זו הוגדרה כקבוצת הסרטים!\nכל חברי הקבוצה יכולים כעת להיכנס לאתר StreamIL.' });
+            await sock.sendMessage(jid, { text: '🎬 קבוצה זו הוגדרה כקבוצת הסרטים!\nכל חברי הקבוצה יכולים כעת להיכנס לאתר StreamIL.\n\n🔗 https://yair681.github.io/streamil/' });
             return;
         }
         if (text === 'כיבוי סרטים') {
