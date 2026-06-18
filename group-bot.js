@@ -56,10 +56,9 @@ async function askGroqReply(question, groupJid) {
 
 function getGroupText(msg) {
     const m = msg.message;
-    if (!m) return '';
+    if (!m) { console.log('📦 NULL message, msg keys:', Object.keys(msg || {}).join(',')); return ''; }
     const types = Object.keys(m);
-    if (!m.conversation && !m.extendedTextMessage && !m.imageMessage)
-        console.log('📦 msg types:', types.join(','));
+    console.log('📦 msg types:', types.join(','));
     return m.conversation
         || m.extendedTextMessage?.text
         || m.imageMessage?.caption
