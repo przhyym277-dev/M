@@ -287,8 +287,9 @@ http.createServer(async (req, res) => {
                 const meta = await sock.groupMetadata(groupJid);
                 const normalized = normalizePhone(phone.replace(/\D/g, ''));
                 const found = meta.participants.some(p => {
-                    const num = normalizePhone(p.id.split('@')[0].replace(/\D/g, ''));
-                    return num === normalized;
+                    const byPhone = p.phoneNumber ? normalizePhone(p.phoneNumber.replace(/\D/g, '')) : null;
+                    const byId = normalizePhone(p.id.split('@')[0].replace(/\D/g, ''));
+                    return (byPhone && byPhone === normalized) || byId === normalized;
                 });
                 return json({ allowed: found });
             } catch (e) {
