@@ -320,6 +320,46 @@ http.createServer(async (req, res) => {
             return json(token ? { ok: true, token } : { ok: false });
         }
     }
+    if (req.url.startsWith('/subtitles')) {
+        const u2 = new URL(req.url, 'http://localhost');
+        const tmdbId = u2.searchParams.get('tmdb_id');
+        const type = u2.searchParams.get('type') || 'movie';
+        const season = u2.searchParams.get('season');
+        const ep = u2.searchParams.get('ep');
+        const jsonErr = (msg) => {
+            res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+            res.end(JSON.stringify({ error: msg }));
+        };
+        if (!tmdbId) return jsonErr('חסר tmdb_id');
+        try {
+            const SUBDL_KEY = process.env.SUBDL_API_KEY || '';
+            let apiUrl = `https://api.subdl.com/api/v1/subtitles?api_key=${SUBDL_KEY}&tmdb_id=${tmdbId}&language=heb&type=${type}&subs_per_page=5`;
+            if (type === 'tv' && season) apiUrl += `&season_number=${season}&episode_number=${ep || 1}`;
+            const apiResp = await fetch(apiUrl);
+            const apiData = await apiResp.json();
+            if (!apiData.subtitles?.length) return jsonErr('לא נמצאו כתוביות עברית');
+            const sub = apiData.subtitles[0];
+            const dlUrl = `https://dl.subdl.com${sub.url}`;
+            const fileResp = await fetch(dlUrl);
+            const buffer = Buffer.from(await fileResp.arrayBuffer());
+            let srtContent;
+            if (dlUrl.endsWith('.zip')) {
+                const AdmZip = require('adm-zip');
+                const zip = new AdmZip(buffer);
+                const entry = zip.getEntries().find(e => /\.(srt|SRT)$/.test(e.entryName));
+                srtContent = entry ? zip.readAsText(entry, 'utf8') : null;
+            } else {
+                srtContent = buffer.toString('utf-8');
+            }
+            if (!srtContent) return jsonErr('לא ניתן לקרוא קובץ כתוביות');
+            res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8', 'Access-Control-Allow-Origin': '*' });
+            res.end(srtContent);
+        } catch (e) {
+            console.error('subtitle error:', e.message);
+            jsonErr('שגיאה בטעינת כתוביות');
+        }
+        return;
+    }
     if (req.url === '/status') {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ status: botStatus, hasQR: !!currentQR }));
