@@ -332,26 +332,24 @@ http.createServer(async (req, res) => {
         };
         if (!tmdbId) return jsonErr('חסר tmdb_id');
         try {
-            const SUBDL_KEY = process.env.SUBDL_API_KEY || '';
-            let apiUrl = `https://api.subdl.com/api/v1/subtitles?api_key=${SUBDL_KEY}&tmdb_id=${tmdbId}&language=heb&type=${type}&subs_per_page=5`;
-            if (type === 'tv' && season) apiUrl += `&season_number=${season}&episode_number=${ep || 1}`;
-            const apiResp = await fetch(apiUrl);
-            const apiData = await apiResp.json();
-            if (!apiData.subtitles?.length) return jsonErr('לא נמצאו כתוביות עברית');
-            const sub = apiData.subtitles[0];
-            const dlUrl = `https://dl.subdl.com${sub.url}`;
-            const fileResp = await fetch(dlUrl);
-            const buffer = Buffer.from(await fileResp.arrayBuffer());
-            let srtContent;
-            if (dlUrl.endsWith('.zip')) {
-                const AdmZip = require('adm-zip');
-                const zip = new AdmZip(buffer);
-                const entry = zip.getEntries().find(e => /\.(srt|SRT)$/.test(e.entryName));
-                srtContent = entry ? zip.readAsText(entry, 'utf8') : null;
-            } else {
-                srtContent = buffer.toString('utf-8');
-            }
-            if (!srtContent) return jsonErr('לא ניתן לקרוא קובץ כתוביות');
+            const OS_KEY = process.env.OPENSUBTITLES_API_KEY || '';
+            const headers = { 'Api-Key': OS_KEY, 'Content-Type': 'application/json', 'User-Agent': 'StreamIL v1.0' };
+            let searchUrl = `https://api.opensubtitles.com/api/v1/subtitles?tmdb_id=${tmdbId}&languages=he&type=${type === 'tv' ? 'episode' : 'movie'}`;
+            if (type === 'tv' && season) searchUrl += `&season_number=${season}&episode_number=${ep || 1}`;
+            const searchResp = await fetch(searchUrl, { headers });
+            const searchData = await searchResp.json();
+            if (!searchData.data?.length) return jsonErr('לא נמצאו כתוביות עברית');
+            const fileId = searchData.data[0].attributes.files[0].file_id;
+            const dlResp = await fetch('https://api.opensubtitles.com/api/v1/download', {
+                method: 'POST',
+                headers,
+                body: JSON.stringify({ file_id: fileId }),
+            });
+            const dlData = await dlResp.json();
+            if (!dlData.link) return jsonErr('לא ניתן להוריד כתוביות');
+            const srtResp = await fetch(dlData.link);
+            const srtContent = await srtResp.text();
+            if (!srtContent) return jsonErr('קובץ כתוביות ריק');
             res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8', 'Access-Control-Allow-Origin': '*' });
             res.end(srtContent);
         } catch (e) {
