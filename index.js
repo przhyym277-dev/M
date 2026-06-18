@@ -869,6 +869,8 @@ async function notifyOwner(text) {
     }
 }
 
+const msgStore = new Map();
+
 async function startBot() {
     const { state, saveCreds } = await useMultiFileAuthState('./auth_state');
     const { version } = await fetchLatestBaileysVersion();
@@ -878,7 +880,11 @@ async function startBot() {
         auth: state,
         logger: pino({ level: 'silent' }),
         printQRInTerminal: true,
-        browser: ['מאקס', 'Chrome', '1.0']
+        browser: ['מאקס', 'Chrome', '1.0'],
+        getMessage: async (key) => {
+            const id = `${key.remoteJid}:${key.id}`;
+            return msgStore.get(id) || { conversation: '' };
+        },
     });
 
     sock.ev.on('creds.update', saveCreds);
@@ -909,6 +915,11 @@ async function startBot() {
         if (type !== 'notify') return;
         for (const msg of messages) {
             try {
+                if (msg.message) {
+                    const id = `${msg.key.remoteJid}:${msg.key.id}`;
+                    msgStore.set(id, msg.message);
+                    if (msgStore.size > 500) msgStore.delete(msgStore.keys().next().value);
+                }
                 if (msg.key.fromMe) continue;
                 const jid = msg.key.remoteJid;
                 if (!jid || jid === 'status@broadcast') continue;
